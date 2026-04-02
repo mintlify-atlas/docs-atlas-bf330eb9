@@ -1,0 +1,263 @@
+---
+title: "Troubleshooting"
+description: "Debug common issues with the OpenTelemetry Operator, Collectors, and auto-instrumentation."
+---
+
+## Common issues
+
+<AccordionGroup>
+  <Accordion title="Collector config is invalid but the resource was still created">
+    The operator does not fully validate the contents of the collector configuration. If the
+    configuration is invalid, the `OpenTelemetryCollector` resource will be created successfully,
+    but the underlying collector pod may enter a `CrashLoopBackOff` state.
+
+    Check the collector pod logs to diagnose configuration errors:
+
+    ```bash
+    kubectl logs -l app.kubernetes.io/managed-by=opentelemetry-operator -n <namespace>
+    ```
+
+    Or describe the pod for event details:
+
+    ```bash
+    kubectl describe pod -l app.kubernetes.io/managed-by=opentelemetry-operator -n <namespace>
+    ```
+  </Accordion>
+
+  <Accordion title="Port parsing errors in receiver config">
+    The operator inspects receiver configuration to discover ports and create Kubernetes Services.
+    If a port value uses environment variable expansion (e.g. `${MY_PORT}`), the operator cannot
+    parse it and will return an error.
+
+    The same applies to `spec.observability.metrics.enableMetrics`: if the metrics service address
+    uses environment variable expansion, the operator will fail to parse the port.
+
+    **Workaround:** Set `enableMetrics: false` in the collector spec and manually create the
+    Service and ServiceMonitor/PodMonitor with the correct port:
+
+    ```yaml
+    apiVersion: opentelemetry.io/v1beta1
+    kind: OpenTelemetryCollector
+    metadata:
+      name: my-collector
+    spec:
+      observability:
+        metrics:
+          enableMetrics: false
+      config:
+        receivers:
+          otlp:
+            protocols:
+              grpc:
+                endpoint: 0.0.0.0:${GRPC_PORT}
+        exporters:
+          debug: {}
+        service:
+          pipelines:
+            traces:
+              receivers: [otlp]
+              exporters: [debug]
+    ```
+  </Accordion>
+
+  <Accordion title="Sidecar injection not working">
+    A common mistake is placing the `sidecar.opentelemetry.io/inject` annotation on the
+    `Deployment` metadata instead of on the `PodTemplate` metadata. The webhook reads pod
+    annotations, not workload annotations.
+
+    **Incorrect placement** — annotation on the Deployment:
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: my-app
+      annotations:
+        sidecar.opentelemetry.io/inject: "true"  # wrong: not read by the webhook
+    spec:
+      template:
+        metadata:
+          labels:
+            app: my-app
+        spec:
+          containers:
+            - name: my-app
+              image: my-app:latest
+    ```
+
+    **Correct placement** — annotation on the PodTemplate:
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: my-app
+    spec:
+      template:
+        metadata:
+          labels:
+            app: my-app
+          annotations:
+            sidecar.opentelemetry.io/inject: "true"  # correct: read during pod admission
+        spec:
+          containers:
+            - name: my-app
+              image: my-app:latest
+    ```
+  </Accordion>
+
+  <Accordion title="Private GKE cluster: webhook connection refused">
+    On private GKE clusters, the Kubernetes API server cannot reach the operator webhook on port
+    `9443/tcp` because the default firewall rules only permit traffic on ports `80/tcp`, `443/tcp`,
+    and `10254/tcp`.
+
+    Add a firewall rule that allows master nodes to reach worker nodes on port `9443/tcp`:
+
+    ```bash
+    gcloud compute firewall-rules create allow-otel-operator-webhook \
+      --direction=INGRESS \
+      --action=ALLOW \
+      --rules=tcp:9443 \
+      --source-ranges=<master-cidr> \
+      --target-tags=<worker-node-tag>
+    ```
+
+    Replace `<master-cidr>` with your cluster's master IP range (visible in the GKE cluster
+    details page) and `<worker-node-tag>` with the network tag applied to your worker nodes.
+
+    See the [GKE documentation on adding firewall rules](https://cloud.google.com/kubernetes-engine/docs/how-to/private-clusters#add_firewall_rules)
+    for full details.
+  </Accordion>
+
+  <Accordion title="imagePullSecret not working for collector pods">
+    The OpenTelemetry Collector pod uses a `ServiceAccount` to pull images. To pull from a private
+    registry, attach an `imagePullSecret` to the service account used by the collector, then
+    reference that service account in the `OpenTelemetryCollector` spec.
+
+    <Steps>
+      <Step title="Create a service account">
+        ```bash
+        kubectl create serviceaccount <service-account-name> -n <namespace>
+        ```
+      </Step>
+
+      <Step title="Create the image pull secret">
+        ```bash
+        kubectl create secret docker-registry <secret-name> \
+          --docker-server=<registry> \
+          --docker-username=<username> \
+          --docker-password=<password> \
+          --docker-email=<email> \
+          -n <namespace>
+        ```
+      </Step>
+
+      <Step title="Patch the service account">
+        ```bash
+        kubectl patch serviceaccount <service-account-name> \
+          -p '{"imagePullSecrets": [{"name": "<secret-name>"}]}' \
+          -n <namespace>
+        ```
+      </Step>
+
+      <Step title="Reference the service account in the collector spec">
+        ```yaml
+        apiVersion: opentelemetry.io/v1beta1
+        kind: OpenTelemetryCollector
+        metadata:
+          name: my-collector
+          namespace: <namespace>
+        spec:
+          serviceAccount: <service-account-name>
+          image: <registry>/my-custom-collector:latest
+          config:
+            receivers:
+              otlp:
+                protocols:
+                  grpc:
+                    endpoint: 0.0.0.0:4317
+            exporters:
+              debug: {}
+            service:
+              pipelines:
+                traces:
+                  receivers: [otlp]
+                  exporters: [debug]
+        ```
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="Go auto-instrumentation fails or is not injected">
+    Go auto-instrumentation has two hard requirements that differ from other languages:
+
+    **1. `OTEL_GO_AUTO_TARGET_EXE` must be set.**
+
+    This environment variable (or the equivalent annotation) tells the instrumentation agent which
+    executable to instrument. If it is not set, injection is aborted and the pod is left unchanged.
+
+    Set it via annotation on the pod:
+
+    ```bash
+    instrumentation.opentelemetry.io/inject-go: "true"
+    instrumentation.opentelemetry.io/otel-go-auto-target-exe: "/path/to/executable"
+    ```
+
+    Or set it in the `Instrumentation` resource:
+
+    ```yaml
+    apiVersion: opentelemetry.io/v1alpha1
+    kind: Instrumentation
+    metadata:
+      name: my-instrumentation
+    spec:
+      go:
+        env:
+          - name: OTEL_GO_AUTO_TARGET_EXE
+            value: /path/to/executable
+    ```
+
+    **2. A privileged security context is required.**
+
+    The Go instrumentation agent uses eBPF and must run as root. The operator sets the following
+    automatically, but your cluster's Pod Security policy must permit it:
+
+    ```yaml
+    securityContext:
+      privileged: true
+      runAsUser: 0
+    ```
+
+    If your namespace enforces a `restricted` Pod Security Standard, Go auto-instrumentation will
+    not work. Use a `privileged` or `baseline` policy for namespaces where Go instrumentation is
+    needed.
+  </Accordion>
+</AccordionGroup>
+
+## Useful commands
+
+List all `OpenTelemetryCollector` resources across all namespaces:
+
+```bash
+kubectl get otelcol -A
+```
+
+List all `Instrumentation` resources across all namespaces:
+
+```bash
+kubectl get otelinst -A
+```
+
+Describe a specific collector for status and events:
+
+```bash
+kubectl describe otelcol <name> -n <namespace>
+```
+
+Stream logs from the operator controller manager:
+
+```bash
+kubectl logs deployment/opentelemetry-operator-controller-manager \
+  -n opentelemetry-operator-system \
+  -f
+```

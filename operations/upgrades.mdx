@@ -1,0 +1,93 @@
+---
+title: "Upgrades"
+description: "Upgrade the operator and manage OpenTelemetry Collector version upgrades."
+---
+
+## Automatic upgrades
+
+When a new version of the OpenTelemetry Operator is deployed, it performs a best-effort upgrade of
+all managed `OpenTelemetryCollector` resources. The operator tracks the same minor version as the
+OpenTelemetry Collector it manages. For example, operator `v0.148.0` manages collector `v0.148.0`
+by default.
+
+## Controlling upgrade behavior
+
+In some cases you may want to prevent the operator from upgrading a specific
+`OpenTelemetryCollector` resource — for example, when you are using a custom `spec.image` and
+managing the collector version yourself. Use the `spec.upgradeStrategy` field to control this
+per resource.
+
+| Value | Behavior |
+|-------|----------|
+| `automatic` | Default. The operator upgrades this resource during its upgrade routine. |
+| `none` | The operator skips this resource during upgrades. You are responsible for version management. |
+
+### Example: opting out of automatic upgrades
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: my-collector
+spec:
+  upgradeStrategy: none
+  image: my-registry/my-custom-otelcol:v0.148.0
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    exporters:
+      debug: {}
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [debug]
+```
+
+<Warning>
+  When `upgradeStrategy` is set to `none` and you are using a custom `spec.image`, it is strongly
+  recommended to keep the operator version aligned with the underlying collector version in your
+  image. Running an operator at `v0.148.0` against a collector image built on `v0.120.0` may
+  result in unexpected behavior or broken configuration.
+</Warning>
+
+## Upgrading the operator itself
+
+<Tabs>
+  <Tab title="kubectl">
+    Apply the latest release manifest:
+
+    ```bash
+    kubectl apply -f https://github.com/open-telemetry/opentelemetry-operator/releases/latest/download/opentelemetry-operator.yaml
+    ```
+
+    To upgrade to a specific version, replace `latest` with the desired version tag, for example:
+
+    ```bash
+    kubectl apply -f https://github.com/open-telemetry/opentelemetry-operator/releases/download/v0.148.0/opentelemetry-operator.yaml
+    ```
+  </Tab>
+
+  <Tab title="Helm">
+    ```bash
+    helm upgrade opentelemetry-operator open-telemetry/opentelemetry-operator \
+      --namespace opentelemetry-operator-system
+    ```
+  </Tab>
+</Tabs>
+
+## Version alignment
+
+The operator follows the same versioning scheme as the OpenTelemetry Collector up to the minor
+version. The patch component reflects the operator's own patch level, not the collector's.
+
+| Operator version | Default collector version |
+|------------------|--------------------------|
+| v0.148.0         | v0.148.0                 |
+| v0.147.0         | v0.147.0                 |
+
+Whenever a new patch version of the collector is released, a corresponding operator patch release
+is published.

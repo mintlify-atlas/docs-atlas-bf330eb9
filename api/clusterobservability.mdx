@@ -1,0 +1,264 @@
+---
+title: "ClusterObservability"
+description: "API reference for the ClusterObservability custom resource (opentelemetry.io/v1alpha1) for cluster-wide telemetry collection."
+---
+
+## Overview
+
+The `ClusterObservability` resource configures cluster-wide observability by deploying OpenTelemetry Collectors to gather traces, metrics, logs, and profiles from all nodes in a cluster, exporting them via a single OTLP HTTP exporter configuration.
+
+<Note>
+  **Feature gate required.** `ClusterObservability` is behind a feature gate and must be explicitly enabled in the operator. Consult your operator deployment configuration.
+</Note>
+
+<Warning>
+  **Singleton constraint.** Only one `ClusterObservability` resource should exist per cluster. If multiple resources are created, the `Conflicted` condition will be set on all instances and the operator will not reconcile any of them until the conflict is resolved.
+</Warning>
+
+| Field | Value |
+|-------|-------|
+| **API Group** | `opentelemetry.io` |
+| **API Version** | `v1alpha1` |
+| **Kind** | `ClusterObservability` |
+| **Scope** | Cluster (singleton) |
+
+## Example
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: ClusterObservability
+metadata:
+  name: cluster
+spec:
+  exporter:
+    endpoint: https://otel-backend.example.com:4318
+    timeout: 30s
+    compression: gzip
+    encoding: proto
+    headers:
+      Authorization: "Bearer my-token"
+    tls:
+      ca_file: /var/run/secrets/custom-ca/ca.crt
+      insecure: false
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      randomization_factor: "0.5"
+      multiplier: "1.5"
+      max_interval: 30s
+      max_elapsed_time: 5m
+```
+
+You can also use per-signal endpoints to route different telemetry types to different backends:
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: ClusterObservability
+metadata:
+  name: cluster
+spec:
+  exporter:
+    endpoint: https://otel-backend.example.com:4318
+    traces_endpoint: https://tracing.example.com:4318/v1/traces
+    metrics_endpoint: https://metrics.example.com:4318/v1/metrics
+    logs_endpoint: https://logs.example.com:4318/v1/logs
+```
+
+## Spec Fields
+
+### Exporter
+
+<ParamField path="spec.exporter" type="object" required>
+  OTLP HTTP exporter configuration for all signals. This mirrors the official OpenTelemetry Collector `otlphttpexporter` configuration. The operator automatically appends appropriate signal paths when not overridden by per-signal endpoints.
+
+  <Expandable title="exporter fields">
+    <ParamField path="spec.exporter.endpoint" type="string">
+      Base URL for the OTLP HTTP exporter (e.g., `https://example.com:4318`). The operator will append `/v1/traces`, `/v1/metrics`, `/v1/logs`, and `/v1/development/profiles` for each signal type unless overridden by per-signal endpoint fields.
+    </ParamField>
+    <ParamField path="spec.exporter.traces_endpoint" type="string">
+      Full URL for trace data (e.g., `https://example.com:4318/v1/traces`). When set, overrides `endpoint` for traces.
+    </ParamField>
+    <ParamField path="spec.exporter.metrics_endpoint" type="string">
+      Full URL for metric data. When set, overrides `endpoint` for metrics.
+    </ParamField>
+    <ParamField path="spec.exporter.logs_endpoint" type="string">
+      Full URL for log data. When set, overrides `endpoint` for logs.
+    </ParamField>
+    <ParamField path="spec.exporter.profiles_endpoint" type="string">
+      Full URL for profile data (e.g., `https://example.com:4318/v1/development/profiles`). When set, overrides `endpoint` for profiles.
+    </ParamField>
+    <ParamField path="spec.exporter.timeout" type="string" default="30s">
+      HTTP request timeout (e.g., `"30s"`, `"1m"`).
+    </ParamField>
+    <ParamField path="spec.exporter.encoding" type="string" default="proto">
+      Encoding format for messages. One of `proto` or `json`.
+    </ParamField>
+    <ParamField path="spec.exporter.compression" type="string" default="gzip">
+      Compression algorithm. One of `gzip` or `none`. Set to `none` to disable compression.
+    </ParamField>
+    <ParamField path="spec.exporter.read_buffer_size" type="integer" default="0">
+      HTTP client read buffer size in bytes.
+    </ParamField>
+    <ParamField path="spec.exporter.write_buffer_size" type="integer" default="524288">
+      HTTP client write buffer size in bytes. Default is `512 * 1024` (512 KiB).
+    </ParamField>
+    <ParamField path="spec.exporter.headers" type="object">
+      Additional HTTP headers sent with each export request. Useful for authentication.
+
+      ```yaml
+      headers:
+        Authorization: "Bearer my-token"
+        X-Tenant-ID: "my-org"
+      ```
+    </ParamField>
+    <ParamField path="spec.exporter.tls" type="object">
+      TLS configuration for the OTLP HTTP connection.
+
+      <Expandable title="tls fields">
+        <ParamField path="spec.exporter.tls.ca_file" type="string">
+          Path to the CA certificate file for server verification.
+        </ParamField>
+        <ParamField path="spec.exporter.tls.cert_file" type="string">
+          Path to the client certificate file for mutual TLS (mTLS).
+        </ParamField>
+        <ParamField path="spec.exporter.tls.key_file" type="string">
+          Path to the client private key file for mTLS.
+        </ParamField>
+        <ParamField path="spec.exporter.tls.insecure" type="boolean" default="false">
+          When `true`, disables TLS verification. Not recommended for production.
+        </ParamField>
+        <ParamField path="spec.exporter.tls.server_name" type="string">
+          Server name for the TLS handshake. Defaults to the hostname from the endpoint.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    <ParamField path="spec.exporter.sending_queue" type="object">
+      Configuration for the sending queue that buffers data before export.
+
+      <Expandable title="sending_queue fields">
+        <ParamField path="spec.exporter.sending_queue.enabled" type="boolean" default="true">
+          Enable or disable the sending queue.
+        </ParamField>
+        <ParamField path="spec.exporter.sending_queue.num_consumers" type="integer" default="10">
+          Number of consumers dequeuing and sending batches. Minimum: `1`.
+        </ParamField>
+        <ParamField path="spec.exporter.sending_queue.queue_size" type="integer" default="1000">
+          Maximum number of batches held in the queue at any time. Minimum: `1`.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    <ParamField path="spec.exporter.retry_on_failure" type="object">
+      Retry configuration for failed export requests using exponential backoff.
+
+      <Expandable title="retry_on_failure fields">
+        <ParamField path="spec.exporter.retry_on_failure.enabled" type="boolean" default="true">
+          Enable or disable retry on failure.
+        </ParamField>
+        <ParamField path="spec.exporter.retry_on_failure.initial_interval" type="string" default="5s">
+          Initial retry interval before the first retry attempt.
+        </ParamField>
+        <ParamField path="spec.exporter.retry_on_failure.randomization_factor" type="string" default="0.5">
+          Randomization factor for computing actual retry intervals to avoid thundering herd. A value of `0.5` means ±50% of the base interval.
+        </ParamField>
+        <ParamField path="spec.exporter.retry_on_failure.multiplier" type="string" default="1.5">
+          Multiplier applied to the previous retry interval to compute the next one.
+        </ParamField>
+        <ParamField path="spec.exporter.retry_on_failure.max_interval" type="string" default="30s">
+          Maximum retry interval. The backoff caps at this value.
+        </ParamField>
+        <ParamField path="spec.exporter.retry_on_failure.max_elapsed_time" type="string" default="5m">
+          Maximum total time to spend retrying before giving up.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Status Fields
+
+<ParamField path="status.phase" type="string">
+  Current phase of the `ClusterObservability` resource (e.g., `Running`, `Pending`, `Failed`).
+</ParamField>
+
+<ParamField path="status.message" type="string">
+  Human-readable message providing additional details about the current state.
+</ParamField>
+
+<ParamField path="status.observedGeneration" type="integer">
+  The most recent generation observed. Corresponds to `.metadata.generation` updated by the API server on mutation.
+</ParamField>
+
+<ParamField path="status.conditions" type="array">
+  List of status conditions reflecting the current state of the resource.
+
+  <Expandable title="conditions fields">
+    <ParamField path="status.conditions[].type" type="string">
+      The condition type. One of:
+
+      | Value | Description |
+      |-------|-------------|
+      | `Ready` | Whether the `ClusterObservability` is fully ready and operational. |
+      | `Configured` | Whether the resource has been successfully configured. |
+      | `Conflicted` | Set when multiple `ClusterObservability` resources exist in the cluster. All conflicting resources are paused until the conflict is resolved. |
+    </ParamField>
+    <ParamField path="status.conditions[].status" type="string">
+      Condition status: `True`, `False`, or `Unknown`.
+    </ParamField>
+    <ParamField path="status.conditions[].lastTransitionTime" type="string">
+      RFC 3339 timestamp of the last status transition.
+    </ParamField>
+    <ParamField path="status.conditions[].reason" type="string">
+      Machine-readable reason for the last transition.
+    </ParamField>
+    <ParamField path="status.conditions[].message" type="string">
+      Human-readable message with details about the condition.
+    </ParamField>
+    <ParamField path="status.conditions[].observedGeneration" type="integer">
+      The `.metadata.generation` that this condition was last evaluated for.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="status.componentsStatus" type="object">
+  Status information for individual observability components managed by this resource.
+
+  <Expandable title="componentsStatus entry fields">
+    <ParamField path="status.componentsStatus.<name>.ready" type="boolean">
+      Whether this component is ready.
+    </ParamField>
+    <ParamField path="status.componentsStatus.<name>.message" type="string">
+      Additional information about the component's status.
+    </ParamField>
+    <ParamField path="status.componentsStatus.<name>.lastUpdated" type="string">
+      RFC 3339 timestamp of when this status was last updated.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="status.configVersions" type="object">
+  Version hashes of the configuration files currently in use. Used to detect configuration changes across operator upgrades.
+</ParamField>
+
+## Singleton Constraint
+
+Only **one** `ClusterObservability` resource is supported per cluster. If multiple resources are detected:
+
+1. The **oldest** resource (by creation timestamp) remains active and continues to be reconciled.
+2. All other resources have the `Conflicted` status condition set to `True` and are not reconciled.
+3. If two resources share the same creation timestamp, the resource with the lexicographically smaller `namespace/name` becomes active.
+4. Delete conflicting resources to resolve the conflict and allow normal reconciliation to resume.
+
+## Resources Managed
+
+The operator creates and manages the following Kubernetes resources on behalf of a `ClusterObservability`:
+
+| Resource | Kind | Purpose |
+|----------|------|---------|
+| Collector pods | `Pod` / `DaemonSet` | Telemetry collection agents on each node |
+| Collector deployment | `Deployment` | Gateway collector for aggregation |
+| Config | `ConfigMap` | Collector pipeline configuration |
+| Network | `Service` | Collector service endpoint |

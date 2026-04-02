@@ -1,80 +1,224 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Deploy your first OpenTelemetry Collector and enable automatic instrumentation in minutes."
 ---
 
-## Get started in three steps
+This guide walks you through the minimal steps to get the OpenTelemetry Operator running in your cluster, deploy a Collector, and enable automatic instrumentation for a workload.
 
-Get your documentation site running locally and make your first customization.
+<Warning>
+  The OpenTelemetry Collector configuration format is still evolving. The examples below reflect the current stable format, but changes may be required in future versions to stay compatible with the latest Collector image. Pin your Collector image version if you need stability.
+</Warning>
 
-### Step 1: Set up your local environment
+<Steps>
+  <Step title="Install cert-manager">
+    The operator requires cert-manager to manage TLS certificates for its admission webhooks. If you do not already have cert-manager installed, apply the latest release manifest:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+    ```
 
-### Step 2: Deploy your changes
+    Wait for cert-manager to be fully ready before proceeding:
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    ```bash
+    kubectl wait --for=condition=Available deployment --all -n cert-manager --timeout=120s
+    ```
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Install the operator">
+    Apply the OpenTelemetry Operator manifest:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    kubectl apply -f https://github.com/open-telemetry/opentelemetry-operator/releases/latest/download/opentelemetry-operator.yaml
+    ```
 
-### Step 3: Go live
+    Verify the operator is running:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```bash
+    kubectl get deployment -n opentelemetry-operator-system
+    ```
 
-## Next steps
+    The `READY` column should show `1/1` before you continue.
+  </Step>
 
-Now that you have your docs running, explore these key features:
+  <Step title="Deploy a Collector">
+    Create an `OpenTelemetryCollector` resource. This example deploys a Collector that receives traces over OTLP (gRPC and HTTP) and exports them to the console via the `debug` exporter:
+
+    ```bash
+    kubectl apply -f - <<EOF
+    apiVersion: opentelemetry.io/v1beta1
+    kind: OpenTelemetryCollector
+    metadata:
+      name: simplest
+    spec:
+      config:
+        receivers:
+          otlp:
+            protocols:
+              grpc:
+                endpoint: 0.0.0.0:4317
+              http:
+                endpoint: 0.0.0.0:4318
+        processors:
+          memory_limiter:
+            check_interval: 1s
+            limit_percentage: 75
+            spike_limit_percentage: 15
+
+        exporters:
+          debug: {}
+
+        service:
+          pipelines:
+            traces:
+              receivers: [otlp]
+              processors: [memory_limiter]
+              exporters: [debug]
+    EOF
+    ```
+
+    This creates an `OpenTelemetryCollector` named `simplest`. The operator creates a `Deployment` and a `Service` for it automatically.
+
+    Verify the Collector is running:
+
+    ```bash
+    kubectl get otelcol
+    ```
+
+    Expected output:
+
+    ```
+    NAME       MODE         VERSION   READY   AGE
+    simplest   deployment   0.148.0   1/1     30s
+    ```
+
+    <Note>
+      The operator does not fully validate the Collector configuration. If the configuration is invalid, the resource will be created but the underlying Collector pod may crash on startup.
+    </Note>
+  </Step>
+
+  <Step title="Enable auto-instrumentation">
+    Create an `Instrumentation` resource that configures the SDK and exports telemetry to your Collector:
+
+    ```bash
+    kubectl apply -f - <<EOF
+    apiVersion: opentelemetry.io/v1alpha1
+    kind: Instrumentation
+    metadata:
+      name: my-instrumentation
+    spec:
+      exporter:
+        endpoint: http://simplest-collector:4317
+      propagators:
+        - tracecontext
+        - baggage
+        - b3
+      sampler:
+        type: parentbased_traceidratio
+        argument: "0.25"
+      python:
+        env:
+          # Python autoinstrumentation uses http/proto by default,
+          # so data must be sent to 4318 instead of 4317.
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://simplest-collector:4318
+      dotnet:
+        env:
+          # DotNet autoinstrumentation uses http/proto by default.
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://simplest-collector:4318
+      go:
+        env:
+          # Go autoinstrumentation uses http/proto by default.
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://simplest-collector:4318
+    EOF
+    ```
+
+    Verify the resource was created:
+
+    ```bash
+    kubectl get otelinst
+    ```
+
+    Now annotate your pod (or its `PodTemplate` in a Deployment) to inject instrumentation. The annotation to use depends on your application's language:
+
+    **Java:**
+
+    ```yaml
+    annotations:
+      instrumentation.opentelemetry.io/inject-java: "true"
+    ```
+
+    **Node.js:**
+
+    ```yaml
+    annotations:
+      instrumentation.opentelemetry.io/inject-nodejs: "true"
+    ```
+
+    **Python:**
+
+    ```yaml
+    annotations:
+      instrumentation.opentelemetry.io/inject-python: "true"
+    ```
+
+    **.NET:**
+
+    ```yaml
+    annotations:
+      instrumentation.opentelemetry.io/inject-dotnet: "true"
+    ```
+
+    For example, to instrument a Java application via a Deployment:
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: my-java-app
+    spec:
+      selector:
+        matchLabels:
+          app: my-java-app
+      template:
+        metadata:
+          labels:
+            app: my-java-app
+          annotations:
+            instrumentation.opentelemetry.io/inject-java: "true"
+        spec:
+          containers:
+            - name: app
+              image: my-java-app:latest
+    ```
+
+    The operator's mutating webhook injects an init container that downloads the instrumentation agent and sets the required environment variables before your application container starts. No changes to your application code or image are needed.
+
+    The annotation value can be:
+
+    | Value | Behavior |
+    |---|---|
+    | `"true"` | Use the `Instrumentation` CR from the same namespace |
+    | `"my-instrumentation"` | Use a named `Instrumentation` CR in the same namespace |
+    | `"other-ns/my-instrumentation"` | Use a named `Instrumentation` CR in another namespace |
+    | `"false"` | Do not inject |
+  </Step>
+</Steps>
+
+## What's next
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Collector deployment modes" icon="server" href="/collector/deployment-modes">
+    Run the Collector as a DaemonSet, StatefulSet, or sidecar instead of the default Deployment.
+  </Card>
+  <Card title="Target Allocator" icon="bullseye" href="/collector/target-allocator">
+    Distribute Prometheus scrape targets across a pool of Collector pods.
+  </Card>
+  <Card title="Instrumentation languages" icon="code" href="/instrumentation/languages">
+    See language-specific configuration options and requirements for auto-instrumentation.
+  </Card>
+  <Card title="Resource attributes" icon="tag" href="/instrumentation/resource-attributes">
+    Configure service name, version, and other resource attributes for your telemetry.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

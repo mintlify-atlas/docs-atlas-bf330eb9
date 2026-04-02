@@ -1,0 +1,581 @@
+---
+title: "OpenTelemetryCollector"
+description: "API reference for the OpenTelemetryCollector custom resource (opentelemetry.io/v1beta1)."
+---
+
+## Overview
+
+The `OpenTelemetryCollector` resource manages the deployment of an OpenTelemetry Collector in a Kubernetes cluster. It supports four deployment modes and integrates with the Target Allocator for Prometheus scraping.
+
+| Field | Value |
+|-------|-------|
+| **API Group** | `opentelemetry.io` |
+| **API Version** | `v1beta1` |
+| **Kind** | `OpenTelemetryCollector` |
+| **Short names** | `otelcol`, `otelcols` |
+| **Scope** | Namespaced |
+
+## Example
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: production
+  namespace: observability
+spec:
+  mode: deployment
+  replicas: 2
+  upgradeStrategy: automatic
+  managementState: managed
+  image: otel/opentelemetry-collector-contrib:latest
+  serviceAccount: otel-collector
+  configVersions: 3
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  env:
+    - name: MY_POD_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.podIP
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+          http:
+            endpoint: "0.0.0.0:4318"
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75
+        spike_limit_percentage: 25
+    exporters:
+      otlp:
+        endpoint: "https://backend.example.com:4317"
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp]
+  targetAllocator:
+    enabled: true
+    replicas: 1
+    allocationStrategy: consistent-hashing
+    prometheusCR:
+      enabled: true
+      scrapeInterval: 30s
+  autoscaler:
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilization: 80
+  ingress:
+    type: ingress
+    hostname: otel-collector.example.com
+  observability:
+    metrics:
+      enableMetrics: true
+  podDisruptionBudget:
+    maxUnavailable: 1
+  tolerations:
+    - key: "node-role"
+      operator: "Equal"
+      value: "observability"
+      effect: "NoSchedule"
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: production-collector
+```
+
+## Spec Fields
+
+<ParamField path="spec.config" type="object" required>
+  The OpenTelemetry Collector configuration as a YAML/JSON object. This is the full collector config including receivers, processors, exporters, and service pipelines. Empty objects (e.g., `batch`) must be written as `batch: {}` for compatibility with `kustomize` and `kubectl edit`.
+</ParamField>
+
+<ParamField path="spec.mode" type="string">
+  Deployment mode for the collector. Defaults to `deployment`.
+
+  | Value | Description |
+  |-------|-------------|
+  | `deployment` | Deploys as a Kubernetes `Deployment`. Suitable for most use cases. |
+  | `daemonset` | Deploys as a `DaemonSet` — one pod per node. Useful for node-level telemetry collection. |
+  | `statefulset` | Deploys as a `StatefulSet`. Useful when stable network identity or persistent storage is required. |
+  | `sidecar` | Injects the collector as a sidecar into annotated pods via the mutation webhook. Does not support `tolerations`, `affinity`, or `additionalContainers`. |
+</ParamField>
+
+<ParamField path="spec.upgradeStrategy" type="string">
+  Determines how the operator handles CR upgrades when a newer operator version is deployed.
+
+  | Value | Description |
+  |-------|-------------|
+  | `automatic` | The operator automatically applies upgrades to the CR. |
+  | `none` | The operator will not apply any upgrades. Manual management is required. |
+</ParamField>
+
+<ParamField path="spec.managementState" type="string" default="managed">
+  Controls whether the operator reconciles this CR. One of `managed` or `unmanaged`. When set to `unmanaged`, the operator ignores this resource.
+</ParamField>
+
+<ParamField path="spec.replicas" type="integer" default="1">
+  Number of pod instances for the underlying workload. Do not set this if you are using autoscaling.
+</ParamField>
+
+<ParamField path="spec.configVersions" type="integer" default="3">
+  Number of collector config versions to retain. Each version is stored in a separate `ConfigMap`. Minimum value is `1`.
+</ParamField>
+
+<ParamField path="spec.image" type="string">
+  Container image to use for the collector pods. If not set, the operator uses its default collector image.
+</ParamField>
+
+<ParamField path="spec.imagePullPolicy" type="string">
+  Image pull policy. One of `Always`, `Never`, or `IfNotPresent`. Defaults to `Always` if the image tag is `:latest`, otherwise `IfNotPresent`.
+</ParamField>
+
+<ParamField path="spec.serviceAccount" type="string">
+  Name of an existing `ServiceAccount` to use. When set, the operator will not create a `ServiceAccount` automatically.
+</ParamField>
+
+<ParamField path="spec.resources" type="object">
+  Compute resource requirements for the collector container.
+
+  <Expandable title="resources fields">
+    <ParamField path="spec.resources.requests" type="object">
+      Minimum resource amounts. Accepts `cpu` and `memory` keys.
+    </ParamField>
+    <ParamField path="spec.resources.limits" type="object">
+      Maximum resource amounts. Accepts `cpu` and `memory` keys.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.env" type="array">
+  List of environment variables to set on the collector pods. Follows the standard Kubernetes `EnvVar` spec.
+</ParamField>
+
+<ParamField path="spec.envFrom" type="array">
+  List of sources to populate environment variables on the collector pods. Supports `configMapRef` and `secretRef`.
+</ParamField>
+
+<ParamField path="spec.volumeMounts" type="array">
+  Volume mount points to use in the collector container.
+</ParamField>
+
+<ParamField path="spec.volumes" type="array">
+  Volumes to attach to the collector pod. Standard Kubernetes `Volume` spec.
+</ParamField>
+
+<ParamField path="spec.ports" type="array">
+  Additional ports to expose via the collector's `Service` and container. The operator automatically infers ports from `spec.config`, but this field is for custom or additional ports.
+</ParamField>
+
+<ParamField path="spec.hostNetwork" type="boolean" default="false">
+  Whether the pod should run in the host networking namespace.
+</ParamField>
+
+<ParamField path="spec.hostPID" type="boolean" default="false">
+  Whether the pod should have access to the host process ID namespace.
+</ParamField>
+
+<ParamField path="spec.shareProcessNamespace" type="boolean" default="false">
+  Whether the pod's containers should share a process namespace.
+</ParamField>
+
+<ParamField path="spec.priorityClassName" type="string">
+  Priority class name for the pods. Not supported in `sidecar` mode.
+</ParamField>
+
+<ParamField path="spec.nodeSelector" type="object">
+  Node selector labels for scheduling pods. Only applicable for `deployment`, `daemonset`, and `statefulset` modes.
+</ParamField>
+
+<ParamField path="spec.tolerations" type="array">
+  Pod tolerations for scheduling on tainted nodes. Not supported in `sidecar` mode.
+</ParamField>
+
+<ParamField path="spec.affinity" type="object">
+  Affinity and anti-affinity scheduling rules. Not supported in `sidecar` mode.
+</ParamField>
+
+<ParamField path="spec.topologySpreadConstraints" type="array">
+  Controls how pods are spread across failure domains. Only applicable for `deployment` and `statefulset` modes.
+</ParamField>
+
+<ParamField path="spec.securityContext" type="object">
+  Container-level security context for the main collector container.
+</ParamField>
+
+<ParamField path="spec.podSecurityContext" type="object">
+  Pod-level security context. Ignored in `sidecar` mode.
+</ParamField>
+
+<ParamField path="spec.podAnnotations" type="object">
+  Annotations to attach to the generated pods.
+</ParamField>
+
+<ParamField path="spec.initContainers" type="array">
+  Init containers to inject into the pod. Can be used to fetch secrets or perform pre-startup checks. Errors in init containers cause a pod restart.
+</ParamField>
+
+<ParamField path="spec.additionalContainers" type="array">
+  Additional sidecar containers to inject. Useful for auth proxies or log shipping agents. Not supported in `sidecar` mode. The operator-managed container is named `otc-container`.
+</ParamField>
+
+<ParamField path="spec.lifecycle" type="object">
+  Container lifecycle hooks (`postStart` and `preStop`). Cannot be updated after creation.
+</ParamField>
+
+<ParamField path="spec.terminationGracePeriodSeconds" type="integer">
+  Duration in seconds the pod needs to terminate gracefully.
+</ParamField>
+
+<ParamField path="spec.args" type="object">
+  Arguments to pass to the collector binary. Keys are flag names (without `--`), values are the flag values.
+</ParamField>
+
+<ParamField path="spec.podDisruptionBudget" type="object">
+  Pod disruption budget configuration. By default, a PDB with `maxUnavailable: 1` is created.
+
+  <Expandable title="podDisruptionBudget fields">
+    <ParamField path="spec.podDisruptionBudget.minAvailable" type="integer or string">
+      Minimum number (or percentage) of pods that must remain available after eviction.
+    </ParamField>
+    <ParamField path="spec.podDisruptionBudget.maxUnavailable" type="integer or string">
+      Maximum number (or percentage) of pods that can be unavailable during disruption. Mutually exclusive with `minAvailable`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.configmaps" type="array">
+  ConfigMaps in the same namespace to mount into the collector pods. Each entry creates a volume named `configmap-<name>`.
+
+  <Expandable title="configmaps entry fields">
+    <ParamField path="spec.configmaps[].name" type="string" required>
+      Name of the ConfigMap.
+    </ParamField>
+    <ParamField path="spec.configmaps[].mountpath" type="string" required>
+      Path where the ConfigMap will be mounted inside the container.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.dnsPolicy" type="string">
+  DNS policy for the pod. Standard Kubernetes `DNSPolicy`.
+</ParamField>
+
+<ParamField path="spec.podDnsConfig" type="object">
+  Additional DNS configuration for the pod, supplementing the `dnsPolicy`.
+</ParamField>
+
+<ParamField path="spec.ipFamilies" type="array">
+  IP families for the service (`IPv4`, `IPv6`).
+</ParamField>
+
+<ParamField path="spec.ipFamilyPolicy" type="string" default="SingleStack">
+  IP family policy for the service (e.g., `SingleStack`, `PreferDualStack`, `RequireDualStack`).
+</ParamField>
+
+<ParamField path="spec.trafficDistribution" type="string">
+  Specifies how traffic to the collector service is routed.
+</ParamField>
+
+<ParamField path="spec.hostUsers" type="boolean">
+  When set, isolates pod processes in a separate user namespace to reduce privilege escalation risk.
+</ParamField>
+
+<ParamField path="spec.hostAliases" type="array">
+  Additional host/IP entries injected into the pod's `/etc/hosts`. Only valid for non-`hostNetwork` pods.
+</ParamField>
+
+### StatefulSet-specific fields
+
+The following fields apply only when `spec.mode` is `statefulset`.
+
+<ParamField path="spec.volumeClaimTemplates" type="array">
+  Persistent volume claim templates for stable storage.
+</ParamField>
+
+<ParamField path="spec.persistentVolumeClaimRetentionPolicy" type="object">
+  Lifecycle policy for PVCs created from `volumeClaimTemplates`.
+</ParamField>
+
+<ParamField path="spec.serviceName" type="string">
+  Headless service name for the StatefulSet. Defaults to `<name>-headless`.
+</ParamField>
+
+<ParamField path="spec.podManagementPolicy" type="string" default="Parallel">
+  Pod creation and termination order for StatefulSet. One of `OrderedReady` or `Parallel`.
+</ParamField>
+
+### Autoscaler
+
+<ParamField path="spec.autoscaler" type="object">
+  Horizontal pod autoscaler configuration. Enabling autoscaling via `maxReplicas` will create an HPA resource.
+
+  <Expandable title="autoscaler fields">
+    <ParamField path="spec.autoscaler.minReplicas" type="integer">
+      Lower bound for autoscaling. Must be at least `1`.
+    </ParamField>
+    <ParamField path="spec.autoscaler.maxReplicas" type="integer">
+      Upper bound. Setting this enables autoscaling.
+    </ParamField>
+    <ParamField path="spec.autoscaler.targetCPUUtilization" type="integer">
+      Target average CPU utilization (percentage) across all replicas. Defaults to `90`.
+    </ParamField>
+    <ParamField path="spec.autoscaler.targetMemoryUtilization" type="integer">
+      Target average memory utilization (percentage) across all replicas.
+    </ParamField>
+    <ParamField path="spec.autoscaler.behavior" type="object">
+      HPA scaling behavior configuration. See `HorizontalPodAutoscalerBehavior` in the Kubernetes API.
+    </ParamField>
+    <ParamField path="spec.autoscaler.metrics" type="array">
+      Custom HPA metrics. Currently only `type: Pods` is supported.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Target Allocator (embedded)
+
+<ParamField path="spec.targetAllocator" type="object">
+  Configuration for the embedded Prometheus Target Allocator. When `enabled: true`, the operator deploys a Target Allocator alongside the collector to distribute Prometheus scrape targets.
+
+  <Expandable title="targetAllocator fields">
+    <ParamField path="spec.targetAllocator.enabled" type="boolean" default="false">
+      Enable the Target Allocator.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.replicas" type="integer">
+      Number of Target Allocator pod instances. Only values greater than `1` make sense with `consistent-hashing` strategy.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.image" type="string">
+      Container image for the Target Allocator.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.serviceAccount" type="string">
+      Name of an existing service account. If not set, one is created automatically.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.allocationStrategy" type="string" default="consistent-hashing">
+      Target distribution strategy. One of `least-weighted`, `consistent-hashing`, or `per-node`. The `per-node` strategy ignores targets without a node (e.g., control plane components).
+    </ParamField>
+    <ParamField path="spec.targetAllocator.filterStrategy" type="string" default="relabel-config">
+      Strategy for filtering targets before allocation. Currently only `relabel-config` is supported.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.resources" type="object">
+      Compute resource requirements for the Target Allocator container.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.nodeSelector" type="object">
+      Node selector labels for the Target Allocator pods.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.tolerations" type="array">
+      Tolerations for the Target Allocator pods.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.affinity" type="object">
+      Affinity rules for the Target Allocator pods.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.topologySpreadConstraints" type="array">
+      Topology spread constraints for the Target Allocator pods.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.env" type="array">
+      Environment variables for the Target Allocator pods.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.securityContext" type="object">
+      Container security context for the Target Allocator.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.podSecurityContext" type="object">
+      Pod security context for the Target Allocator.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.podDisruptionBudget" type="object">
+      Pod disruption budget for the Target Allocator. Defaults to `maxUnavailable: 1` for valid allocation strategies.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.collectorNotReadyGracePeriod" type="string" default="30s">
+      Duration the Target Allocator waits before reassigning targets from a not-Ready collector. Avoids expensive reallocations during transient failures.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.collectorTargetReloadInterval" type="string" default="30s">
+      Interval at which the Prometheus receiver reloads targets from the Target Allocator.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.observability" type="object">
+      Observability configuration for the Target Allocator.
+    </ParamField>
+    <ParamField path="spec.targetAllocator.prometheusCR" type="object">
+      Configuration for Prometheus Operator CR discovery (`ServiceMonitor`, `PodMonitor`).
+
+      <Expandable title="prometheusCR fields">
+        <ParamField path="spec.targetAllocator.prometheusCR.enabled" type="boolean" default="false">
+          Enable discovery of Prometheus Operator CRs as scrape targets.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.scrapeInterval" type="string" default="30s">
+          Default scrape interval. Overridden by intervals set on individual `ServiceMonitor`/`PodMonitor` objects.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.evaluationInterval" type="string" default="30s">
+          Default rule evaluation interval.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.serviceMonitorSelector" type="object">
+          Label selector to filter `ServiceMonitor` resources.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.serviceMonitorNamespaceSelector" type="object">
+          Label selector for namespaces from which `ServiceMonitor` resources are discovered.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.podMonitorSelector" type="object">
+          Label selector to filter `PodMonitor` resources.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.podMonitorNamespaceSelector" type="object">
+          Label selector for namespaces from which `PodMonitor` resources are discovered.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.scrapeConfigSelector" type="object">
+          Label selector to filter `ScrapeConfig` resources.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.probeSelector" type="object">
+          Label selector to filter `Probe` resources.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.allowNamespaces" type="array">
+          Namespaces the Target Allocator is allowed to interact with via the API server. Mutually exclusive with `denyNamespaces`.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.denyNamespaces" type="array">
+          Namespaces excluded from Target Allocator interaction. Mutually exclusive with `allowNamespaces`.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.scrapeProtocols" type="array">
+          Protocols to negotiate during scraping, in order of preference.
+        </ParamField>
+        <ParamField path="spec.targetAllocator.prometheusCR.scrapeClasses" type="array">
+          Scrape classes referenced by `PodMonitor` and `ServiceMonitor` resources.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Ingress
+
+<ParamField path="spec.ingress" type="object">
+  Configuration for exposing the collector externally. Only valid for `deployment`, `daemonset`, and `statefulset` modes.
+
+  <Expandable title="ingress fields">
+    <ParamField path="spec.ingress.type" type="string">
+      Ingress type. One of `ingress` or `route` (OpenShift).
+    </ParamField>
+    <ParamField path="spec.ingress.hostname" type="string">
+      Hostname for the ingress resource.
+    </ParamField>
+    <ParamField path="spec.ingress.annotations" type="object">
+      Annotations to add to the ingress resource.
+    </ParamField>
+    <ParamField path="spec.ingress.tls" type="array">
+      TLS configuration for the ingress.
+    </ParamField>
+    <ParamField path="spec.ingress.ingressClassName" type="string">
+      Ingress class name to use.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Observability
+
+<ParamField path="spec.observability" type="object">
+  Defines how the operator exposes telemetry about the collector itself.
+
+  <Expandable title="observability fields">
+    <ParamField path="spec.observability.metrics.enableMetrics" type="boolean" default="false">
+      When `true`, creates a `ServiceMonitor` (or `PodMonitor` in sidecar mode) for the collector.
+    </ParamField>
+    <ParamField path="spec.observability.metrics.extraLabels" type="object">
+      Additional labels to add to the generated `ServiceMonitor`.
+    </ParamField>
+    <ParamField path="spec.observability.metrics.disablePrometheusAnnotations" type="boolean" default="false">
+      Disables the automatic addition of `prometheus.io/scrape`, `prometheus.io/port`, and `prometheus.io/path` pod annotations.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Health Probes
+
+<ParamField path="spec.livenessProbe" type="object">
+  Liveness probe configuration. Effective only when the `healthcheck` extension is configured in the collector pipeline.
+
+  <Expandable title="probe fields">
+    <ParamField path="spec.livenessProbe.initialDelaySeconds" type="integer">
+      Seconds after container start before the probe is initiated. Minimum: `0`.
+    </ParamField>
+    <ParamField path="spec.livenessProbe.timeoutSeconds" type="integer">
+      Seconds after which the probe times out. Minimum: `1`.
+    </ParamField>
+    <ParamField path="spec.livenessProbe.periodSeconds" type="integer">
+      How often the probe is performed (seconds). Minimum: `1`.
+    </ParamField>
+    <ParamField path="spec.livenessProbe.successThreshold" type="integer">
+      Minimum consecutive successes to be considered successful. Minimum: `1`.
+    </ParamField>
+    <ParamField path="spec.livenessProbe.failureThreshold" type="integer">
+      Minimum consecutive failures to be considered failed. Minimum: `1`.
+    </ParamField>
+    <ParamField path="spec.livenessProbe.terminationGracePeriodSeconds" type="integer">
+      Grace period for pod termination on probe failure. Overrides the pod-level value.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.readinessProbe" type="object">
+  Readiness probe configuration. Same fields as `livenessProbe`.
+</ParamField>
+
+<ParamField path="spec.startupProbe" type="object">
+  Startup probe configuration. Same fields as `livenessProbe`.
+</ParamField>
+
+### Update Strategies
+
+<ParamField path="spec.daemonSetUpdateStrategy" type="object">
+  Update strategy for `daemonset` mode. See [DaemonSetUpdateStrategy](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/daemon-set-v1/#DaemonSetSpec).
+</ParamField>
+
+<ParamField path="spec.deploymentUpdateStrategy" type="object">
+  Update strategy for `deployment` mode. See [DeploymentStrategy](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/deployment-v1/#DeploymentSpec).
+</ParamField>
+
+<ParamField path="spec.networkPolicy" type="object">
+  Network policy applied to the collector pods.
+</ParamField>
+
+## Status Fields
+
+<ParamField path="status.version" type="string">
+  Version of the managed OpenTelemetry Collector operand.
+</ParamField>
+
+<ParamField path="status.image" type="string">
+  Container image currently in use for the collector.
+</ParamField>
+
+<ParamField path="status.scale" type="object">
+  Scale subresource status (used by the HPA).
+
+  <Expandable title="scale fields">
+    <ParamField path="status.scale.selector" type="string">
+      Label selector used to match collector pods.
+    </ParamField>
+    <ParamField path="status.scale.replicas" type="integer">
+      Total number of non-terminated pods.
+    </ParamField>
+    <ParamField path="status.scale.statusReplicas" type="string">
+      Human-readable replica status string (`Ready/Total`).
+    </ParamField>
+  </Expandable>
+</ParamField>

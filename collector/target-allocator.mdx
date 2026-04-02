@@ -1,0 +1,306 @@
+---
+title: "Target Allocator"
+description: "Use the Target Allocator to distribute Prometheus scrape targets across a pool of OpenTelemetry Collectors and discover Prometheus Operator CRs."
+---
+
+The Target Allocator (TA) is an optional component of the `OpenTelemetryCollector` CRD. It decouples service discovery from metric collection so that they can be scaled independently.
+
+<Note>
+The Target Allocator supports the `statefulset` and `daemonset` deployment modes only.
+</Note>
+
+## What the Target Allocator does
+
+The TA serves two functions:
+
+<CardGroup cols={2}>
+  <Card title="Even target distribution" icon="scale-balanced">
+    Discovers Prometheus scrape targets and distributes them evenly across a pool of collector pods. Each collector queries the TA for its assigned targets.
+  </Card>
+  <Card title="Prometheus CR discovery" icon="magnifying-glass">
+    Watches `ServiceMonitor` and `PodMonitor` custom resources from the Prometheus Operator ecosystem and translates them into scrape configurations.
+  </Card>
+</CardGroup>
+
+Without the TA, each collector pod would independently run Prometheus service discovery and scrape the full set of targets — leading to duplicated metrics. With the TA, targets are sharded across collectors so each target is scraped exactly once.
+
+## How it works
+
+1. The TA discovers metrics targets using Prometheus service discovery or Prometheus CRs.
+2. The TA discovers all available collector pods.
+3. The TA assigns each target to a collector using the configured allocation strategy.
+4. Each collector pod queries the TA's `http_sd_config` endpoint for its assigned targets.
+5. The collectors scrape their assigned targets.
+
+## Enabling the Target Allocator
+
+Set `spec.targetAllocator.enabled: true` in your `OpenTelemetryCollector` spec. The collector must be in `statefulset` mode.
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: collector-with-ta
+spec:
+  mode: statefulset
+  targetAllocator:
+    enabled: true
+  config:
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+          - job_name: 'otel-collector'
+            scrape_interval: 10s
+            static_configs:
+            - targets: [ '0.0.0.0:8888' ]
+            metric_relabel_configs:
+            - action: labeldrop
+              regex: (id|name)
+            - action: labelmap
+              regex: label_(.+)
+              replacement: $$1
+    exporters:
+      debug: {}
+    service:
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          exporters: [debug]
+```
+
+<Note>
+Use `$$` in Prometheus `replacement` values in the collector config to prevent the collector from interpreting `$` as an environment variable. The operator rewrites `$$` to `$` in the TA configuration automatically.
+</Note>
+
+## How the operator rewrites the Prometheus receiver config
+
+After reconciliation, the operator replaces the Prometheus receiver's `scrape_configs` with a `target_allocator` directive pointing to the TA:
+
+**Before (what you write in `spec.config`):**
+
+```yaml
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+      - job_name: 'otel-collector'
+        scrape_interval: 10s
+        static_configs:
+        - targets: [ '0.0.0.0:8888' ]
+```
+
+**After (what the operator injects into each collector pod's config):**
+
+```yaml
+receivers:
+  prometheus:
+    target_allocator:
+      endpoint: http://collector-with-ta-targetallocator:80
+      interval: 30s
+      collector_id: $POD_NAME
+```
+
+The original `scrape_configs` are moved to the TA's own configuration, where they are distributed among collectors.
+
+## Configuration reference
+
+The Target Allocator is configured via `spec.targetAllocator` in the `OpenTelemetryCollector` spec.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Whether to deploy the Target Allocator |
+| `allocationStrategy` | string | `consistent-hashing` | Strategy used to distribute targets across collectors |
+| `filterStrategy` | string | `relabel-config` | How targets are filtered before allocation. `relabel-config` drops targets based on Prometheus `relabel_config` rules |
+| `replicas` | int | `1` | Number of TA pods. Only `consistent-hashing` supports replicas > 1 for high availability |
+| `image` | string | | Container image to use for the TA |
+| `serviceAccount` | string | | Existing ServiceAccount to use. If omitted, one is created automatically |
+| `resources` | ResourceRequirements | | CPU and memory requests/limits for the TA container |
+| `nodeSelector` | map | | Node selector for TA pods |
+| `affinity` | Affinity | | Pod scheduling constraints |
+| `tolerations` | Toleration[] | | Pod tolerations |
+| `env` | EnvVar[] | | Environment variables for the TA container |
+| `prometheusCR` | TargetAllocatorPrometheusCR | | Prometheus CR discovery configuration |
+| `collectorNotReadyGracePeriod` | duration | `30s` | How long the TA waits before reassigning targets from a not-ready collector |
+| `collectorTargetReloadInterval` | duration | `30s` | How often collectors reload targets from the TA |
+| `podDisruptionBudget` | PodDisruptionBudgetSpec | MaxUnavailable=1 | PDB configuration for the TA workload |
+
+## Allocation strategies
+
+### `consistent-hashing` (default)
+
+Assigns targets to collectors using consistent hashing on the target URL. This prevents label changes from causing targets to move between collectors. Rebalancing occurs only when the collector count changes.
+
+This is the recommended strategy for most use cases. It is the only strategy that supports running multiple TA replicas for high availability.
+
+### `least-weighted`
+
+Assigns each new target to the collector with the fewest currently assigned targets. Provides stable assignment when collector count changes, at the cost of slightly less even distribution.
+
+### `per-node`
+
+Assigns each target to the collector running on the same node as the target. Only meaningful when the collector is deployed as a DaemonSet.
+
+<Warning>
+The `per-node` strategy ignores targets that are not assigned to a node, such as control plane components.
+</Warning>
+
+## Prometheus CR discovery
+
+The TA can watch `ServiceMonitor` and `PodMonitor` CRs from the Prometheus Operator ecosystem. Enable this with `spec.targetAllocator.prometheusCR.enabled`.
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: collector-with-ta-prometheus-cr
+spec:
+  mode: statefulset
+  targetAllocator:
+    enabled: true
+    serviceAccount: everything-prometheus-operator-needs
+    prometheusCR:
+      enabled: true
+      serviceMonitorSelector: {}
+      podMonitorSelector: {}
+  config:
+    receivers:
+      prometheus:
+        config: {}
+    exporters:
+      debug: {}
+    service:
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          exporters: [debug]
+```
+
+<Note>
+As of `v1beta1`, you must include both `serviceMonitorSelector` and `podMonitorSelector` fields even if you intend to match all monitors. Use `{}` to select all monitors in the cluster.
+</Note>
+
+### Filtering monitors by label
+
+To limit which monitors the TA watches, specify label selectors:
+
+```yaml
+prometheusCR:
+  enabled: true
+  serviceMonitorSelector:
+    matchLabels:
+      app: my-app
+  podMonitorSelector:
+    matchLabels:
+      app: my-app
+```
+
+A `ServiceMonitor` must have matching labels in its `metadata.labels` to be picked up.
+
+### Restricting to specific namespaces
+
+Use `allowNamespaces` to limit the TA to watching specific namespaces:
+
+```yaml
+prometheusCR:
+  enabled: true
+  allowNamespaces:
+    - production
+    - staging
+```
+
+When `allowNamespaces` is set, create a `Role` and `RoleBinding` instead of a cluster-scoped `ClusterRole`.
+
+## RBAC requirements
+
+The TA ServiceAccount needs RBAC permissions to discover targets. Create a `ClusterRole` with the minimum required access:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opentelemetry-targetallocator-role
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/metrics
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources:
+  - configmaps
+  verbs: ["get"]
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+```
+
+When `prometheusCR.enabled: true`, also grant access to the Prometheus CR types:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opentelemetry-targetallocator-cr-role
+rules:
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - servicemonitors
+  - podmonitors
+  verbs:
+  - '*'
+- apiGroups: [""]
+  resources:
+  - namespaces
+  verbs: ["get", "list", "watch"]
+```
+
+## Using the standalone TargetAllocator CRD
+
+For more customization, you can manage the Target Allocator as a separate `TargetAllocator` CR instead of embedding it in the collector spec. Link the two resources using the `opentelemetry.io/target-allocator` label:
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: collector-with-ta
+  labels:
+    opentelemetry.io/target-allocator: ta
+spec:
+  mode: statefulset
+  config:
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+          - job_name: 'otel-collector'
+            scrape_interval: 10s
+            static_configs:
+            - targets: [ '0.0.0.0:8888' ]
+    exporters:
+      debug: {}
+    service:
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          exporters: [debug]
+---
+apiVersion: opentelemetry.io/v1alpha1
+kind: TargetAllocator
+metadata:
+  name: ta
+spec: {}
+```

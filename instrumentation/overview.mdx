@@ -1,0 +1,197 @@
+---
+title: "Auto-Instrumentation Overview"
+description: "Automatically inject and configure OpenTelemetry instrumentation into your Kubernetes workloads without modifying application code."
+---
+
+The OpenTelemetry Operator can inject and configure OpenTelemetry auto-instrumentation libraries into your pods at runtime. No code changes are required — the operator mutates pods at admission time, inserting the appropriate SDK and setting the necessary environment variables based on annotations you place on your workloads.
+
+Currently supported languages: Java, Node.js, Python, .NET, Go, Apache HTTPD, and Nginx.
+
+## The Instrumentation CRD
+
+The `Instrumentation` custom resource defines how the SDK and instrumentation libraries should be configured for a given namespace or workload. It controls:
+
+- **Exporter endpoint** — where telemetry data is sent (OTLP endpoint)
+- **Propagators** — context propagation formats set via `OTEL_PROPAGATORS`
+- **Sampler** — sampling strategy set via `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG`
+- **Per-language configuration** — image overrides, environment variables, and language-specific options for each supported runtime
+- **Resource attributes** — additional resource attributes to attach to all telemetry
+
+### Create an Instrumentation resource
+
+```yaml
+kubectl apply -f - <<EOF
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: my-instrumentation
+spec:
+  exporter:
+    endpoint: http://otel-collector:4317
+  propagators:
+    - tracecontext
+    - baggage
+    - b3
+  sampler:
+    type: parentbased_traceidratio
+    argument: "0.25"
+  python:
+    env:
+      # Python autoinstrumentation uses http/proto by default,
+      # so data must be sent to 4318 instead of 4317.
+      - name: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: http://otel-collector:4318
+  dotnet:
+    env:
+      # DotNet autoinstrumentation uses http/proto by default.
+      - name: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: http://otel-collector:4318
+  go:
+    env:
+      # Go autoinstrumentation uses http/proto by default,
+      # so data must be sent to 4318 instead of 4317.
+      - name: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: http://otel-collector:4318
+EOF
+```
+
+<Note>
+Python, .NET, and Go auto-instrumentation use `http/proto` by default. If your collector exporter endpoint uses port `4317` (gRPC), override `OTEL_EXPORTER_OTLP_ENDPOINT` in the per-language `env` block to point to port `4318`.
+</Note>
+
+The CR can be queried with:
+
+```bash
+kubectl get otelinst
+```
+
+### Propagators
+
+Values in `spec.propagators` are joined and set as the `OTEL_PROPAGATORS` environment variable. Valid values are:
+
+| Value          | Description                  |
+| -------------- | ---------------------------- |
+| `tracecontext` | W3C Trace Context            |
+| `baggage`      | W3C Baggage                  |
+| `b3`           | B3 Single header             |
+| `b3multi`      | B3 Multi header              |
+| `jaeger`       | Jaeger propagation           |
+| `xray`         | AWS X-Ray                    |
+| `ottrace`      | OT Trace                     |
+| `none`         | Automatically configured     |
+
+### Sampler types
+
+The `spec.sampler.type` value is set as `OTEL_TRACES_SAMPLER`. Valid types are:
+
+| Type                          | Description                              |
+| ----------------------------- | ---------------------------------------- |
+| `always_on`                   | Sample every trace                       |
+| `always_off`                  | Sample no traces                         |
+| `traceidratio`                | Sample a ratio of traces by trace ID     |
+| `parentbased_always_on`       | Respect parent; default to always on     |
+| `parentbased_always_off`      | Respect parent; default to always off    |
+| `parentbased_traceidratio`    | Respect parent; default to ratio-based   |
+| `jaeger_remote`               | Jaeger remote sampler                    |
+| `xray`                        | AWS X-Ray centralized sampling           |
+
+The `spec.sampler.argument` value is set as `OTEL_TRACES_SAMPLER_ARG`. For `parentbased_traceidratio`, this is a number in `[0..1]`, e.g. `"0.25"`.
+
+## Inject annotation mechanism
+
+Once an `Instrumentation` resource exists, enable injection by adding an annotation to a pod, namespace, `Deployment`, `StatefulSet`, or other pod-based workload.
+
+The operator automatically injects `OTEL_NODE_IP` and `OTEL_POD_IP` environment variables, which you can reference in endpoint values.
+
+**Annotation values:**
+
+| Value                                  | Behavior                                                       |
+| -------------------------------------- | -------------------------------------------------------------- |
+| `"true"`                               | Use the `Instrumentation` CR from the current namespace        |
+| `"my-instrumentation"`                 | Use a named CR in the current namespace                        |
+| `"other-namespace/my-instrumentation"` | Use a named CR from another namespace                          |
+| `"false"`                              | Disable injection                                              |
+
+The annotation can be placed on the namespace (applies to all pods in the namespace) or on individual pods. For pod-based workloads like `Deployment`, place the annotation on the `spec.template.metadata.annotations` section, not on the top-level `metadata.annotations`.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "true"  # correct
+    spec:
+      containers:
+        - name: myapp
+          image: my-java-app:latest
+```
+
+See [Language Support](/instrumentation/languages) for per-language annotation details.
+
+## Feature gate flags
+
+Language support is controlled by feature gate flags passed to the operator. If a language is enabled by default, its gate only needs to be supplied when disabling it.
+
+| Language     | Flag                                    | Default   |
+| ------------ | --------------------------------------- | --------- |
+| Java         | `enable-java-instrumentation`           | `true`    |
+| Node.js      | `enable-nodejs-instrumentation`         | `true`    |
+| Python       | `enable-python-instrumentation`         | `true`    |
+| .NET         | `enable-dotnet-instrumentation`         | `true`    |
+| Apache HTTPD | `enable-apache-httpd-instrumentation`   | `true`    |
+| Go           | `enable-go-instrumentation`             | `false`   |
+| Nginx        | `enable-nginx-instrumentation`          | `false`   |
+
+To disable a language, pass the flag with `false`:
+
+```bash
+--enable-go-instrumentation=false
+```
+
+To enable a language that defaults to `false`:
+
+```bash
+--enable-go-instrumentation=true
+```
+
+### Multi-instrumentation flag
+
+By default, only a single language instrumentation can be injected per pod. To allow different containers in the same pod to be instrumented with different languages, enable:
+
+```bash
+--enable-multi-instrumentation=true
+```
+
+See [Multi-Container Pods](/instrumentation/multi-container) for usage details.
+
+## Custom and vendor instrumentation
+
+By default, the operator uses the upstream auto-instrumentation images. You can substitute a custom or vendor-provided image by overriding the `image` field in the per-language section of the `Instrumentation` CR:
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: my-instrumentation
+spec:
+  java:
+    image: your-customized-auto-instrumentation-image:java
+  nodejs:
+    image: your-customized-auto-instrumentation-image:nodejs
+  python:
+    image: your-customized-auto-instrumentation-image:python
+  dotnet:
+    image: your-customized-auto-instrumentation-image:dotnet
+  go:
+    image: your-customized-auto-instrumentation-image:go
+  apacheHttpd:
+    image: your-customized-auto-instrumentation-image:apache-httpd
+  nginx:
+    image: your-customized-auto-instrumentation-image:nginx
+```
+
+Dockerfiles for each language's auto-instrumentation image are in the [`autoinstrumentation/`](https://github.com/open-telemetry/opentelemetry-operator/tree/main/autoinstrumentation) directory of the operator repository.

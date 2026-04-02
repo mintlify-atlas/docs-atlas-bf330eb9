@@ -1,0 +1,137 @@
+---
+title: "Collector Overview"
+description: "An overview of the OpenTelemetryCollector CRD, including how it works, what resources it creates, and how to get started."
+---
+
+The `OpenTelemetryCollector` custom resource definition (CRD) is the primary object managed by the OpenTelemetry Operator. It lets you declaratively deploy and manage OpenTelemetry Collector instances on Kubernetes.
+
+## What the CRD does
+
+When you create an `OpenTelemetryCollector` resource, the operator:
+
+1. Creates the underlying Kubernetes workload (Deployment, DaemonSet, StatefulSet, or injects a sidecar).
+2. Creates Kubernetes Services to expose the receiver ports discovered from `spec.config`.
+3. Optionally creates a `ServiceMonitor` or `PodMonitor` for collector observability metrics.
+4. Manages upgrades to the collector configuration as the operator itself is updated.
+
+## Collector configuration
+
+`spec.config` holds the raw YAML that is passed directly to the OpenTelemetry Collector. The operator does **not** validate the full contents — if the configuration is invalid, the collector pods may crash.
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: simplest
+spec:
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75
+        spike_limit_percentage: 15
+    exporters:
+      debug: {}
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter]
+          exporters: [debug]
+```
+
+<Note>
+Empty objects (e.g. `batch:`) must be written as `batch: {}`. Otherwise, tools like `kustomize` and `kubectl edit` may not handle them correctly.
+</Note>
+
+## How the operator examines the config
+
+The operator inspects `spec.config` for two purposes:
+
+**Receiver port discovery** — The operator scans each receiver for configured ports. For every port it discovers, it creates a pair of Kubernetes Services:
+
+- A **headless service** for receivers, which includes a `service.beta.openshift.io/serving-cert-secret-name` annotation on OpenShift clusters. This secret can be mounted as a volume to configure TLS on receivers.
+- A **regular ClusterIP service** exposing those same ports within the cluster.
+
+If a port uses environment variable expansion or cannot be parsed, the operator returns an error.
+
+**Observability metrics** — If `spec.observability.metrics.enableMetrics` is `true`, the operator creates a `Service` and a `ServiceMonitor` (or `PodMonitor` in sidecar mode) for the collector instance. If the metrics service address contains an invalid port or uses environment variable expansion, an error is returned.
+
+<Tip>
+If you need environment variable expansion in your metrics port, set `enableMetrics: false` and create the `Service` and `ServiceMonitor`/`PodMonitor` objects manually.
+</Tip>
+
+## Services created
+
+| Service type | Purpose |
+|---|---|
+| Headless (`ClusterIP: None`) | Stable DNS entries per pod; enables OpenShift TLS cert injection |
+| ClusterIP | Standard in-cluster access to receiver ports |
+
+## Upgrade strategy
+
+`.spec.upgradeStrategy` controls whether the operator manages upgrades to the collector instance.
+
+| Value | Behavior |
+|---|---|
+| `automatic` (default) | The operator upgrades this instance during operator upgrades |
+| `none` | The operator skips this instance during upgrade routines |
+
+Setting `upgradeStrategy: none` is useful when you manage the collector image and configuration yourself, for example when using a custom `.spec.image`.
+
+## Basic example
+
+The following creates a collector named `simplest` that receives traces over OTLP and prints them to stdout via the `debug` exporter:
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: simplest
+spec:
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    exporters:
+      debug: {}
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [debug]
+```
+
+Apply it with:
+
+```bash
+kubectl apply -f collector.yaml
+```
+
+Verify the collector is running:
+
+```bash
+kubectl get otelcol simplest
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment modes" href="/collector/deployment-modes">
+    Run the collector as a Deployment, DaemonSet, StatefulSet, or sidecar.
+  </Card>
+  <Card title="Autoscaling" href="/collector/autoscaling">
+    Configure HorizontalPodAutoscaler for your collector instances.
+  </Card>
+</CardGroup>

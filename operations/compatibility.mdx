@@ -1,0 +1,92 @@
+---
+title: "Compatibility"
+description: "Supported Kubernetes versions, Go versions, and component compatibility matrix."
+---
+
+## Go version policy
+
+When used as a Go library or custom distribution, the OpenTelemetry Operator follows the
+[official Go release policy](https://go.dev/doc/devel/release#policy), which supports the two
+most recent major Go versions.
+
+Support is updated as follows:
+
+- The first operator release after a new Go minor version **N** is published adds build and test
+  steps for that version.
+- The first operator release after a new Go minor version **N** removes support for Go version
+  **N-2**.
+
+Removing support for an unsupported Go version is **not** considered a breaking change.
+Official operator binaries may be built with any currently supported Go version.
+
+## Kubernetes version support
+
+The operator aims to support the widest practical range of Kubernetes versions:
+
+- All versions currently maintained by the upstream Kubernetes project (see the
+  [Kubernetes releases page](https://kubernetes.io/releases/)).
+- All versions offered by popular distributions and hosted platforms, including
+  [OpenShift](https://access.redhat.com/support/policy/updates/openshift) and
+  [AWS EKS](https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html).
+
+When a Kubernetes version is removed from support, at least one month's notice is given
+beforehand.
+
+## Operator and collector versioning
+
+The operator tracks the same minor version as the OpenTelemetry Collector. For example, operator
+`v0.18.1` manages collector `0.18.0`. The patch component of the operator version reflects the
+operator's own patch level.
+
+When a custom `spec.image` is configured on an `OpenTelemetryCollector` resource, the operator
+does not manage versioning for that resource. In this case, keep the operator version aligned with
+the collector version embedded in your custom image.
+
+## cert-manager
+
+cert-manager **v1** is required. The operator uses cert-manager for webhook certificate
+management. See the
+[cert-manager installation docs](https://cert-manager.io/docs/installation/) for setup
+instructions.
+
+## Compatibility matrix
+
+The table below shows the supported Kubernetes, cert-manager, and Prometheus Operator versions
+for each operator release. The operator _may_ work outside these ranges, but issues should be
+reproduced on a supported version before filing a bug report.
+
+| OpenTelemetry Operator | Kubernetes     | Cert-Manager | Prometheus Operator |
+|------------------------|----------------|--------------|---------------------|
+| v0.148.0               | v1.25 to v1.35 | v1           | v0.89.0             |
+| v0.147.0               | v1.25 to v1.35 | v1           | v0.89.0             |
+| v0.146.0               | v1.25 to v1.35 | v1           | v0.89.0             |
+| v0.145.0               | v1.25 to v1.35 | v1           | v0.89.0             |
+| v0.144.0               | v1.25 to v1.35 | v1           | v0.88.0             |
+| v0.143.0               | v1.25 to v1.35 | v1           | v0.87.1             |
+| v0.142.0               | v1.25 to v1.35 | v1           | v0.87.1             |
+| v0.141.0               | v1.25 to v1.34 | v1           | v0.81.0             |
+| v0.140.0               | v1.25 to v1.33 | v1           | v0.81.0             |
+| v0.139.0               | v1.25 to v1.33 | v1           | v0.81.0             |
+| v0.138.0               | v1.25 to v1.33 | v1           | v0.81.0             |
+| v0.137.0               | v1.25 to v1.33 | v1           | v0.81.0             |
+| v0.136.0               | v1.25 to v1.33 | v1           | v0.81.0             |
+| v0.135.0               | v1.25 to v1.33 | v1           | v0.81.0             |
+| v0.134.0               | v1.25 to v1.33 | v1           | v0.81.0             |
+| v0.133.0               | N/A            | N/A          | N/A                 |
+| v0.132.0               | v1.25 to v1.33 | v1           | v0.81.0             |
+| v0.131.0               | v1.25 to v1.33 | v1           | v0.81.0             |
+| v0.129.1               | v1.23 to v1.33 | v1           | v0.81.0             |
+| v0.127.0               | v1.23 to v1.32 | v1           | v0.81.0             |
+| v0.126.0               | v1.23 to v1.32 | v1           | v0.80.1             |
+| v0.125.0               | v1.23 to v1.32 | v1           | v0.80.1             |
+| v0.124.0               | v1.23 to v1.32 | v1           | v0.80.1             |
+| v0.123.0               | v1.23 to v1.32 | v1           | v0.80.1             |
+| v0.122.0               | v1.23 to v1.32 | v1           | v0.80.1             |
+| v0.121.0               | v1.23 to v1.32 | v1           | v0.78.2             |
+| v0.120.0               | v1.23 to v1.32 | v1           | v0.76.2             |
+
+<Note>
+  The Prometheus Operator column reflects the version of the prometheus-operator packages
+  imported by the Target Allocator. Newer CRDs (e.g., `ServiceMonitor`) generally remain
+  backwards compatible, but specific features may require a minimum package version.
+</Note>

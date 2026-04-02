@@ -1,0 +1,121 @@
+---
+title: "Introduction"
+description: "Learn what the OpenTelemetry Operator for Kubernetes is, what it manages, and how it works."
+---
+
+The OpenTelemetry Operator is an implementation of a [Kubernetes Operator](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/). It manages the full lifecycle of OpenTelemetry components in your cluster and automates the injection of OpenTelemetry instrumentation libraries into your workloads — no code changes required.
+
+<Note>
+  The operator requires [cert-manager](https://cert-manager.io/docs/installation/) to be installed in your cluster for managing TLS certificates used by its admission webhooks.
+</Note>
+
+## What the operator manages
+
+The operator acts as a controller for several OpenTelemetry components, reconciling their desired state (as defined in Custom Resources) with the actual state in your cluster.
+
+<CardGroup cols={2}>
+  <Card title="OpenTelemetry Collector" icon="server" href="/collector/overview">
+    Deploy and manage Collectors as Deployments, DaemonSets, StatefulSets, or Sidecars.
+  </Card>
+  <Card title="Auto-instrumentation" icon="wand-magic-sparkles" href="/instrumentation/overview">
+    Automatically inject tracing, metrics, and logging into your workloads using OpenTelemetry instrumentation libraries.
+  </Card>
+  <Card title="Target Allocator" icon="bullseye" href="/collector/target-allocator">
+    Distribute Prometheus scrape targets evenly across a pool of Collector instances.
+  </Card>
+  <Card title="OpAMP Bridge" icon="bridge" href="/components/opamp-bridge">
+    Remotely manage Collector configurations via the OpAMP protocol.
+  </Card>
+  <Card title="Cluster Observability" icon="eye" href="/components/cluster-observability">
+    Deploy cluster-wide observability with a single Custom Resource.
+  </Card>
+</CardGroup>
+
+## Custom Resources
+
+The operator introduces five Custom Resource Definitions (CRDs) into your cluster:
+
+| Custom Resource | API Version | Purpose |
+|---|---|---|
+| `OpenTelemetryCollector` | `opentelemetry.io/v1beta1` | Manages OpenTelemetry Collector deployments |
+| `Instrumentation` | `opentelemetry.io/v1alpha1` | Configures auto-instrumentation injection |
+| `TargetAllocator` | `opentelemetry.io/v1alpha1` | Standalone Prometheus target allocation |
+| `OpAMPBridge` | `opentelemetry.io/v1alpha1` | Enables remote configuration via OpAMP |
+| `ClusterObservability` | `opentelemetry.io/v1alpha1` | Cluster-wide observability configuration |
+
+### OpenTelemetryCollector (v1beta1)
+
+The primary resource. It manages one or more OpenTelemetry Collector instances and supports four deployment modes: `Deployment` (default), `DaemonSet`, `StatefulSet`, and `Sidecar`.
+
+### Instrumentation (v1alpha1)
+
+Configures the auto-instrumentation libraries for your workloads. Once created, you enable injection by adding a pod annotation — no changes to your application code are required. Supported languages include Java, Node.js, Python, .NET, Go, Apache HTTPD, and Nginx.
+
+### TargetAllocator (v1alpha1)
+
+Can be used as a standalone resource or embedded in an `OpenTelemetryCollector` spec. It distributes Prometheus scrape targets evenly across a pool of Collector pods, and supports service discovery via `ServiceMonitor` and `PodMonitor` resources from the prometheus-operator ecosystem.
+
+### OpAMPBridge (v1alpha1)
+
+Enables remote management of Collector configurations using the [Open Agent Management Protocol (OpAMP)](https://opentelemetry.io/docs/collector/management/). This allows a central control plane to push configuration updates to deployed Collectors.
+
+### ClusterObservability (v1alpha1)
+
+A higher-level resource for deploying cluster-wide observability with a single CR, aggregating multiple components under one configuration surface.
+
+## Architecture overview
+
+The operator runs as a standard Kubernetes controller inside the `opentelemetry-operator-system` namespace. It watches for changes to OpenTelemetry Custom Resources and reconciles them with the actual state of the cluster.
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  Kubernetes Cluster                 │
+│                                                     │
+│  ┌──────────────────────────────────────────────┐   │
+│  │        opentelemetry-operator-system         │   │
+│  │                                              │   │
+│  │  ┌─────────────────────────────────────┐     │   │
+│  │  │   opentelemetry-operator-controller  │     │   │
+│  │  │   (watches CRs, reconciles state)   │     │   │
+│  │  └──────────────┬──────────────────────┘     │   │
+│  └─────────────────┼────────────────────────────┘   │
+│                    │ creates/updates                 │
+│          ┌─────────▼──────────────────────────┐     │
+│          │  Deployments, DaemonSets,           │     │
+│          │  StatefulSets, Services,            │     │
+│          │  ConfigMaps, ServiceAccounts        │     │
+│          └────────────────────────────────────┘     │
+│                                                     │
+│  Admission Webhooks (port 9443/tcp)                 │
+│  ├── Mutating: injects sidecars & instrumentation   │
+│  └── Validating: validates CR configuration         │
+└─────────────────────────────────────────────────────┘
+```
+
+The operator uses **admission webhooks** to intercept pod creation and:
+
+- Inject a Collector sidecar when `sidecar.opentelemetry.io/inject` is set
+- Inject auto-instrumentation init containers when `instrumentation.opentelemetry.io/inject-*` annotations are present
+
+The operator also inspects Collector configuration to:
+- Discover receiver ports and automatically create Kubernetes `Service` objects
+- Enable observability metrics via `ServiceMonitor` or `PodMonitor` when configured
+
+## Versioning
+
+The operator tracks the OpenTelemetry Collector version up to the minor version. For example, OpenTelemetry Operator v0.148.0 manages OpenTelemetry Collector 0.148.0 by default. The current release is **v0.148.0**.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install the operator using kubectl or Helm.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Deploy your first Collector in minutes.
+  </Card>
+  <Card title="Collector overview" icon="server" href="/collector/overview">
+    Learn about deployment modes and configuration.
+  </Card>
+  <Card title="Auto-instrumentation" icon="wand-magic-sparkles" href="/instrumentation/overview">
+    Inject tracing and metrics without code changes.
+  </Card>
+</CardGroup>

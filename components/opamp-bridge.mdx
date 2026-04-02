@@ -1,0 +1,195 @@
+---
+title: "OpAMP Bridge"
+description: "Report and manage OpenTelemetry Collector state in Kubernetes using the OpAMP protocol."
+---
+
+The OpAMP Bridge is an optional component of the OpenTelemetry Operator that connects your Kubernetes-hosted OpenTelemetry Collectors to an [OpAMP server](https://opentelemetry.io/docs/specs/opamp/). It implements the agent side of the OpAMP protocol and acts as a bridge between the Kubernetes API and the OpAMP backend.
+
+## What it does
+
+The OpAMP Bridge provides three core capabilities:
+
+<CardGroup cols={3}>
+  <Card title="Report status" icon="signal">
+    Reports the health and effective configuration of `OpenTelemetryCollector` CRD instances to an OpAMP server.
+  </Card>
+  <Card title="Receive configs" icon="arrow-down-to-line">
+    Receives `OpenTelemetryCollector` configurations from an OpAMP server and applies CRUD operations via the Kubernetes API.
+  </Card>
+  <Card title="Emit own telemetry" icon="chart-line">
+    Sends its own telemetry to an OTLP/HTTP endpoint for observability of the bridge itself.
+  </Card>
+</CardGroup>
+
+## Installation
+
+<Tabs>
+  <Tab title="OpAMPBridge CRD">
+    The OpAMP Bridge is included with the OpenTelemetry Operator. Deploy it by creating an `OpAMPBridge` custom resource.
+
+    See [OpAMPBridge CRD](#opampbridge-crd) below for a full example.
+  </Tab>
+  <Tab title="Helm Kube Stack chart">
+    The OpAMP Bridge is available as a component in the [OpenTelemetry Kube Stack Helm Chart](https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-kube-stack), which installs the operator and a suite of collectors as a quickstart.
+
+    ```bash
+    helm install opentelemetry-kube-stack open-telemetry/opentelemetry-kube-stack \
+      --set opampBridge.enabled=true
+    ```
+  </Tab>
+</Tabs>
+
+## OpAMPBridge CRD
+
+The `OpAMPBridge` resource configures the bridge instance. The following example creates a bridge that can report health and manage `OpenTelemetryCollector` instances, restricted to a specific set of allowed components:
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpAMPBridge
+metadata:
+  name: opamp-bridge
+spec:
+  endpoint: "<OPAMP_SERVER_ENDPOINT>"
+  capabilities:
+    AcceptsRemoteConfig: true
+    ReportsEffectiveConfig: true
+    ReportsHealth: true
+    ReportsRemoteConfig: true
+  componentsAllowed:
+    receivers:
+      - otlp
+    processors:
+      - memory_limiter
+      - batch
+    exporters:
+      - otlphttp
+```
+
+### Available capabilities
+
+| Capability | Description |
+|---|---|
+| `AcceptsRemoteConfig` | Bridge accepts collector configurations pushed from the OpAMP server. |
+| `ReportsEffectiveConfig` | Bridge reports the current effective configuration of collectors to the server. |
+| `ReportsHealth` | Bridge reports the health status of managed collectors. |
+| `ReportsRemoteConfig` | Bridge reports configurations it has received back to the server. |
+| `ReportsOwnTraces` | Bridge emits its own traces to an OTLP endpoint. |
+| `ReportsOwnMetrics` | Bridge emits its own metrics to an OTLP endpoint. |
+| `ReportsOwnLogs` | Bridge emits its own logs to an OTLP endpoint. |
+| `AcceptsOpAMPConnectionSettings` | Bridge accepts OpAMP connection settings from the server. |
+| `AcceptsOtherConnectionSettings` | Bridge accepts other connection settings from the server. |
+| `AcceptsRestartCommand` | Bridge accepts restart commands from the server. |
+
+## Labeling collectors
+
+The `OpenTelemetryCollector` CRD must be annotated with a label to be managed by the OpAMP Bridge. Two labels are available depending on the level of control needed:
+
+| Label | Behavior |
+|---|---|
+| `opentelemetry.io/opamp-reporting` | Reporting only — status and config are sent to the OpAMP server, but the server cannot modify the collector. |
+| `opentelemetry.io/opamp-managed` | Reporting and management — the OpAMP server can push configuration changes to the collector. |
+
+### Reporting only
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: opamp-reporting-collector
+  labels:
+    opentelemetry.io/opamp-reporting: "true"
+spec:
+  # ...
+```
+
+### Managed by any bridge
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: opamp-managed-collector
+  labels:
+    opentelemetry.io/opamp-managed: "true"
+spec:
+  # ...
+```
+
+### Managed by a specific bridge
+
+Set the label value to the name of the `OpAMPBridge` instance to restrict management to a single bridge:
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: opamp-managed-collector
+  labels:
+    opentelemetry.io/opamp-managed: opamp-bridge
+spec:
+  # ...
+```
+
+## RBAC
+
+The OpAMP Bridge needs Kubernetes RBAC permissions to read and manage `OpenTelemetryCollector` resources. If you do not provide a service account via `spec.serviceAccount`, the operator creates one automatically — but you must still bind it to a role.
+
+<Steps>
+  <Step title="Create a ClusterRole">
+    ```yaml
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: opamp-bridge-role
+    rules:
+    - apiGroups:
+        - opentelemetry.io
+      resources:
+        - opentelemetrycollectors
+      verbs:
+        - "*"
+    - apiGroups:
+        - ""
+      resources:
+        - pods
+      verbs:
+        - get
+        - list
+    ```
+  </Step>
+  <Step title="Bind the role to the service account">
+    ```yaml
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: opamp-bridge-rolebinding
+    subjects:
+    - kind: ServiceAccount
+      name: opamp-bridge-sa
+      namespace: default
+    roleRef:
+      kind: ClusterRole
+      name: opamp-bridge-role
+      apiGroup: rbac.authorization.k8s.io
+    ```
+  </Step>
+  <Step title="Reference the service account in the OpAMPBridge spec">
+    ```yaml
+    apiVersion: opentelemetry.io/v1alpha1
+    kind: OpAMPBridge
+    metadata:
+      name: opamp-bridge
+    spec:
+      serviceAccount: opamp-bridge-sa
+      # ...
+    ```
+  </Step>
+</Steps>
+
+<Note>
+If `spec.serviceAccount` is omitted, the operator creates a service account named `<bridge-name>-opamp-bridge` with no default policy. You must still create the `ClusterRole` and `ClusterRoleBinding` manually.
+</Note>
+
+## API reference
+
+See the [OpAMPBridge API reference](/api/opampbridge) for the full list of fields available in `spec`.

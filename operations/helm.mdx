@@ -1,0 +1,136 @@
+---
+title: "Helm installation"
+description: "Install the OpenTelemetry Operator using Helm or the Operator Lifecycle Manager."
+---
+
+The OpenTelemetry Operator can be installed in two ways: via Helm chart or via the Operator Lifecycle Manager (OLM). Both methods require `cert-manager` to be installed first.
+
+<Info>
+  `cert-manager` v1 is required before installing the operator. See the
+  [cert-manager installation docs](https://cert-manager.io/docs/installation/) for instructions.
+</Info>
+
+<Tabs>
+  <Tab title="Helm">
+    ## Install via Helm
+
+    The operator is available in the
+    [opentelemetry-helm-charts](https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-operator)
+    repository.
+
+    <Steps>
+      <Step title="Add the Helm repository">
+        ```bash
+        helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+        ```
+      </Step>
+
+      <Step title="Update your local chart index">
+        ```bash
+        helm repo update
+        ```
+      </Step>
+
+      <Step title="Install the operator">
+        ```bash
+        helm install opentelemetry-operator open-telemetry/opentelemetry-operator \
+          --namespace opentelemetry-operator-system \
+          --create-namespace \
+          --set "manager.collectorImage.repository=otel/opentelemetry-collector-k8s"
+        ```
+
+        This installs the operator into the `opentelemetry-operator-system` namespace, creating
+        it if it does not already exist. The `manager.collectorImage.repository` value sets the
+        default image used for managed `OpenTelemetryCollector` resources.
+      </Step>
+
+      <Step title="Verify the installation">
+        ```bash
+        kubectl get pods -n opentelemetry-operator-system
+        ```
+
+        You should see the `opentelemetry-operator-controller-manager` pod in a `Running` state.
+      </Step>
+    </Steps>
+
+    ### Upgrading via Helm
+
+    To upgrade an existing installation to a newer chart version:
+
+    ```bash
+    helm upgrade opentelemetry-operator open-telemetry/opentelemetry-operator \
+      --namespace opentelemetry-operator-system
+    ```
+  </Tab>
+
+  <Tab title="OLM">
+    ## Install via Operator Lifecycle Manager
+
+    The operator is published on [OperatorHub.io](https://operatorhub.io/operator/opentelemetry-operator)
+    and can be installed using the Operator Lifecycle Manager (OLM).
+
+    <Tabs>
+      <Tab title="Kubernetes">
+        OLM is not pre-installed on plain Kubernetes. Install it first, then install the operator from OperatorHub.
+
+        <Steps>
+          <Step title="Install OLM">
+            Follow the [official OLM installation instructions](https://olm.operatorframework.io/docs/getting-started/) to install OLM on your cluster.
+          </Step>
+
+          <Step title="Create a Subscription">
+            Create a `Subscription` resource to install the operator from OperatorHub:
+
+            ```yaml
+            apiVersion: operators.coreos.com/v1alpha1
+            kind: Subscription
+            metadata:
+              name: opentelemetry-operator
+              namespace: operators
+            spec:
+              channel: alpha
+              name: opentelemetry-operator
+              source: operatorhubio-catalog
+              sourceNamespace: olm
+            ```
+          </Step>
+
+          <Step title="Verify the installation">
+            ```bash
+            kubectl get csv -n operators
+            ```
+
+            The `opentelemetry-operator` ClusterServiceVersion should show `Succeeded`.
+          </Step>
+        </Steps>
+
+        To uninstall:
+
+        ```bash
+        kubectl delete subscription opentelemetry-operator -n operators
+        kubectl delete clusterserviceversion -l operators.coreos.com/opentelemetry-operator.operators -n operators
+        ```
+      </Tab>
+
+      <Tab title="OpenShift">
+        OLM is pre-installed on OpenShift. You can install the OpenTelemetry Operator directly
+        from the OperatorHub in the OpenShift web console.
+
+        <Steps>
+          <Step title="Open OperatorHub">
+            In the OpenShift web console, navigate to **Operators → OperatorHub**.
+          </Step>
+
+          <Step title="Search for the operator">
+            Search for **OpenTelemetry Operator** and select it from the results.
+          </Step>
+
+          <Step title="Install">
+            Click **Install**, choose the target namespace and update channel, then click
+            **Install** again to confirm.
+          </Step>
+        </Steps>
+      </Tab>
+    </Tabs>
+  </Tab>
+</Tabs>

@@ -1,0 +1,162 @@
+---
+title: "Multi-Container Pods"
+description: "Instrument specific containers in a multi-container pod, inject into init containers, and apply different language instrumentations to different containers."
+---
+
+By default, instrumentation is applied to the first container listed in `spec.containers`. When a pod has multiple containers, you can control exactly which containers are instrumented, and — with the `enable-multi-instrumentation` flag — instrument different containers with different language SDKs.
+
+## Single instrumentation on multiple containers
+
+Use the `container-names` annotation to specify one or more containers that should receive the same instrumentation. Container names must come from `.spec.containers.name` or `.spec.initContainers.name`.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-deployment-with-multiple-containers
+spec:
+  selector:
+    matchLabels:
+      app: my-pod-with-multiple-containers
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: my-pod-with-multiple-containers
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "true"
+        instrumentation.opentelemetry.io/container-names: "myapp,myapp2"
+    spec:
+      containers:
+        - name: myapp
+          image: myImage1
+        - name: myapp2
+          image: myImage2
+        - name: myapp3
+          image: myImage3
+```
+
+In this example, `myapp` and `myapp2` are instrumented with Java. `myapp3` is not instrumented.
+
+<Warning>
+Go auto-instrumentation **does not** support multi-container pods. When using Go, only the first container in the pod spec will be instrumented.
+</Warning>
+
+## Instrumenting init containers
+
+Init containers can be instrumented by including their names in the `container-names` annotation. The operator inserts the instrumentation init container **before** the target init container in the init container sequence, ensuring the agent files are in place when the target runs.
+
+<Note>
+Kubernetes guarantees that container names are unique across both `initContainers` and `containers` within a pod. The operator uses this to identify whether a name refers to an init container or a regular container.
+</Note>
+
+**Supported for init containers:**
+- Java
+- Python
+- Node.js
+- .NET
+- SDK-only injection
+
+**Not supported for init containers:**
+- Go
+- Apache HTTPD
+- Nginx
+
+**Example — instrumenting both an init container and a regular container:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-deployment-with-init-container
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: my-app
+      annotations:
+        instrumentation.opentelemetry.io/inject-python: "true"
+        instrumentation.opentelemetry.io/container-names: "my-init-job,myapp"
+    spec:
+      initContainers:
+        - name: my-init-job
+          image: my-python-init-image
+      containers:
+        - name: myapp
+          image: my-python-app-image
+```
+
+Both `my-init-job` (init container) and `myapp` (regular container) are instrumented with Python.
+
+## Multi-language instrumentation
+
+When the `enable-multi-instrumentation` feature gate is enabled, you can instrument different containers in the same pod with different language SDKs.
+
+**Enable the feature gate:**
+
+```bash
+--enable-multi-instrumentation=true
+```
+
+Use language-specific container name annotations to declare which containers receive which instrumentation:
+
+| Language     | Annotation                                                       |
+| ------------ | ---------------------------------------------------------------- |
+| Java         | `instrumentation.opentelemetry.io/java-container-names`         |
+| Node.js      | `instrumentation.opentelemetry.io/nodejs-container-names`       |
+| Python       | `instrumentation.opentelemetry.io/python-container-names`       |
+| .NET         | `instrumentation.opentelemetry.io/dotnet-container-names`       |
+| Go           | `instrumentation.opentelemetry.io/go-container-names`           |
+| Apache HTTPD | `instrumentation.opentelemetry.io/apache-httpd-container-names` |
+| Nginx        | `instrumentation.opentelemetry.io/inject-nginx-container-names` |
+| SDK only     | `instrumentation.opentelemetry.io/sdk-container-names`          |
+
+**Example — Java and Python in the same pod:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-deployment-with-multi-containers-multi-instrumentations
+spec:
+  selector:
+    matchLabels:
+      app: my-pod-with-multi-containers-multi-instrumentations
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: my-pod-with-multi-containers-multi-instrumentations
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "true"
+        instrumentation.opentelemetry.io/java-container-names: "myapp,myapp2"
+        instrumentation.opentelemetry.io/inject-python: "true"
+        instrumentation.opentelemetry.io/python-container-names: "myapp3"
+    spec:
+      containers:
+        - name: myapp
+          image: myImage1
+        - name: myapp2
+          image: myImage2
+        - name: myapp3
+          image: myImage3
+```
+
+`myapp` and `myapp2` are instrumented with Java; `myapp3` is instrumented with Python.
+
+The language-specific container name annotations also support init container names for Java, Python, Node.js, .NET, and SDK-only injection.
+
+## Limitations
+
+<Warning>
+The following limitations apply when using multi-container or multi-instrumentation features:
+
+- **Go does not support multi-container pods.** When using Go auto-instrumentation, only the first container in the pod should be the instrumentation target.
+- **A container cannot be instrumented with multiple languages.** Each container may only receive one language instrumentation.
+- The `instrumentation.opentelemetry.io/container-names` annotation is **not** used when `enable-multi-instrumentation` is active. Use the language-specific container name annotations instead.
+- If no language-specific container name annotation is provided when `enable-multi-instrumentation` is active, instrumentation falls back to the first regular container (only for single-instrumentation configurations).
+</Warning>

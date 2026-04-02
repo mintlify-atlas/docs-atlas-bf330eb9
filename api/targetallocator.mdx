@@ -1,0 +1,380 @@
+---
+title: "TargetAllocator"
+description: "API reference for the standalone TargetAllocator custom resource (opentelemetry.io/v1alpha1) for Prometheus target distribution."
+---
+
+## Overview
+
+The `TargetAllocator` is a standalone custom resource for distributing Prometheus scrape targets across a fleet of OpenTelemetry Collectors. It can be used independently of the `OpenTelemetryCollector` CR. An embedded version is also available inside `OpenTelemetryCollector.spec.targetAllocator`.
+
+| Field | Value |
+|-------|-------|
+| **API Group** | `opentelemetry.io` |
+| **API Version** | `v1alpha1` |
+| **Kind** | `TargetAllocator` |
+| **Scope** | Namespaced |
+
+## Example
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: TargetAllocator
+metadata:
+  name: my-target-allocator
+  namespace: observability
+spec:
+  managementState: managed
+  replicas: 1
+  image: ghcr.io/open-telemetry/opentelemetry-operator/target-allocator:latest
+  serviceAccount: target-allocator
+  allocationStrategy: consistent-hashing
+  filterStrategy: relabel-config
+  collectorNotReadyGracePeriod: 30s
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    - name: MY_POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+  tolerations:
+    - key: "node-role"
+      operator: "Equal"
+      value: "observability"
+      effect: "NoSchedule"
+  observability:
+    metrics:
+      enableMetrics: true
+  podDisruptionBudget:
+    maxUnavailable: 1
+  global:
+    scrape_interval: 60s
+    evaluation_interval: 60s
+  scrapeConfigs:
+    - job_name: static-example
+      static_configs:
+        - targets:
+            - "my-service:9090"
+  prometheusCR:
+    enabled: true
+    scrapeInterval: 30s
+    serviceMonitorSelector:
+      matchLabels:
+        monitoring: enabled
+    podMonitorSelector:
+      matchLabels:
+        monitoring: enabled
+    serviceMonitorNamespaceSelector: {}
+    podMonitorNamespaceSelector: {}
+    allowNamespaces:
+      - observability
+      - production
+  livenessProbe:
+    initialDelaySeconds: 5
+    timeoutSeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 5
+    timeoutSeconds: 3
+    periodSeconds: 10
+```
+
+## Spec Fields
+
+### Core Fields
+
+<ParamField path="spec.managementState" type="string" default="managed">
+  Controls whether the operator reconciles this resource. One of `managed` or `unmanaged`.
+</ParamField>
+
+<ParamField path="spec.replicas" type="integer" default="1">
+  Number of Target Allocator pod instances. Values greater than `1` only make sense with the `consistent-hashing` allocation strategy.
+</ParamField>
+
+<ParamField path="spec.image" type="string">
+  Container image for the Target Allocator. If not set, the operator uses its bundled default.
+</ParamField>
+
+<ParamField path="spec.imagePullPolicy" type="string">
+  Image pull policy. One of `Always`, `Never`, or `IfNotPresent`.
+</ParamField>
+
+<ParamField path="spec.serviceAccount" type="string">
+  Name of an existing `ServiceAccount`. When set, the operator will not create one automatically.
+</ParamField>
+
+<ParamField path="spec.allocationStrategy" type="string" default="consistent-hashing">
+  Strategy for distributing targets among collectors.
+
+  | Value | Description |
+  |-------|-------------|
+  | `consistent-hashing` | Targets are distributed consistently — supports high availability with multiple replicas. |
+  | `least-weighted` | Targets are assigned to the collector with the fewest currently assigned targets. |
+  | `per-node` | Each target is assigned to the collector running on the same node. Use only with `daemonset` mode collectors. **Note**: ignores targets without a node (e.g., control plane components). |
+</ParamField>
+
+<ParamField path="spec.filterStrategy" type="string" default="relabel-config">
+  Strategy for filtering targets before allocation. Currently only `relabel-config` is supported (drops targets based on Prometheus `relabel_config`). An empty string disables filtering.
+</ParamField>
+
+<ParamField path="spec.collectorNotReadyGracePeriod" type="string" default="30s">
+  Duration the Target Allocator waits before reassigning targets from a not-Ready collector. This avoids expensive reallocations during transient failures. Must be a valid Go duration string (e.g., `"30s"`, `"1m"`).
+</ParamField>
+
+### Compute Resources
+
+<ParamField path="spec.resources" type="object">
+  Compute resource requirements for the Target Allocator container.
+
+  <Expandable title="resources fields">
+    <ParamField path="spec.resources.requests" type="object">
+      Minimum resource amounts (`cpu`, `memory`).
+    </ParamField>
+    <ParamField path="spec.resources.limits" type="object">
+      Maximum resource amounts (`cpu`, `memory`).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.podDisruptionBudget" type="object">
+  Pod disruption budget configuration.
+
+  <Expandable title="podDisruptionBudget fields">
+    <ParamField path="spec.podDisruptionBudget.minAvailable" type="integer or string">
+      Minimum number or percentage of pods that must be available after eviction.
+    </ParamField>
+    <ParamField path="spec.podDisruptionBudget.maxUnavailable" type="integer or string">
+      Maximum number or percentage of pods that may be unavailable. Mutually exclusive with `minAvailable`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Scheduling
+
+<ParamField path="spec.nodeSelector" type="object">
+  Node selector labels for scheduling Target Allocator pods.
+</ParamField>
+
+<ParamField path="spec.tolerations" type="array">
+  Tolerations for scheduling on tainted nodes.
+</ParamField>
+
+<ParamField path="spec.affinity" type="object">
+  Affinity and anti-affinity rules.
+</ParamField>
+
+<ParamField path="spec.topologySpreadConstraints" type="array">
+  Controls how pods are spread across failure domains (regions, zones, nodes).
+</ParamField>
+
+<ParamField path="spec.priorityClassName" type="string">
+  Priority class name for the Target Allocator pods.
+</ParamField>
+
+<ParamField path="spec.hostNetwork" type="boolean" default="false">
+  Whether the pod runs in the host networking namespace.
+</ParamField>
+
+### Security
+
+<ParamField path="spec.securityContext" type="object">
+  Container-level security context for the Target Allocator container.
+</ParamField>
+
+<ParamField path="spec.podSecurityContext" type="object">
+  Pod-level security context.
+</ParamField>
+
+### Workload Configuration
+
+<ParamField path="spec.env" type="array">
+  Environment variables for the Target Allocator pods.
+</ParamField>
+
+<ParamField path="spec.envFrom" type="array">
+  Sources for populating environment variables (`configMapRef`, `secretRef`).
+</ParamField>
+
+<ParamField path="spec.volumeMounts" type="array">
+  Volume mounts for the Target Allocator container.
+</ParamField>
+
+<ParamField path="spec.volumes" type="array">
+  Volumes for the Target Allocator pod.
+</ParamField>
+
+<ParamField path="spec.initContainers" type="array">
+  Init containers to inject into the pod.
+</ParamField>
+
+<ParamField path="spec.additionalContainers" type="array">
+  Additional sidecar containers.
+</ParamField>
+
+<ParamField path="spec.podAnnotations" type="object">
+  Annotations to attach to the Target Allocator pods.
+</ParamField>
+
+<ParamField path="spec.ports" type="array">
+  Additional ports to expose.
+</ParamField>
+
+<ParamField path="spec.args" type="object">
+  Arguments passed to the Target Allocator binary.
+</ParamField>
+
+<ParamField path="spec.lifecycle" type="object">
+  Container lifecycle hooks (`postStart`, `preStop`).
+</ParamField>
+
+<ParamField path="spec.terminationGracePeriodSeconds" type="integer">
+  Graceful termination period in seconds.
+</ParamField>
+
+<ParamField path="spec.podDnsConfig" type="object">
+  Additional DNS configuration for the pod.
+</ParamField>
+
+<ParamField path="spec.dnsPolicy" type="string">
+  DNS policy for the pod.
+</ParamField>
+
+<ParamField path="spec.ipFamilies" type="array">
+  IP families for the service (`IPv4`, `IPv6`).
+</ParamField>
+
+<ParamField path="spec.ipFamilyPolicy" type="string" default="SingleStack">
+  IP family policy (`SingleStack`, `PreferDualStack`, `RequireDualStack`).
+</ParamField>
+
+<ParamField path="spec.trafficDistribution" type="string">
+  Traffic distribution for the Target Allocator service.
+</ParamField>
+
+<ParamField path="spec.hostUsers" type="boolean">
+  Isolates pod processes in a separate user namespace.
+</ParamField>
+
+<ParamField path="spec.hostAliases" type="array">
+  Additional host/IP entries for the pod's `/etc/hosts`.
+</ParamField>
+
+<ParamField path="spec.shareProcessNamespace" type="boolean" default="false">
+  Share a process namespace between containers.
+</ParamField>
+
+### Prometheus Global Configuration
+
+<ParamField path="spec.global" type="object">
+  Global Prometheus configuration applied to the Target Allocator. Follows the [Prometheus global config format](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#configuration-file). Free-form object — unknown fields are preserved.
+</ParamField>
+
+### Static Scrape Configs
+
+<ParamField path="spec.scrapeConfigs" type="array">
+  Static Prometheus scrape configurations. For dynamic discovery from `ServiceMonitor`/`PodMonitor` CRs, use `prometheusCR`. Follows the [Prometheus scrape_config format](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#scrape_config). Free-form objects — unknown fields are preserved.
+</ParamField>
+
+### Prometheus CR Discovery
+
+<ParamField path="spec.prometheusCR" type="object">
+  Configuration for Prometheus Operator CRD discovery. Enables the Target Allocator to use `ServiceMonitor`, `PodMonitor`, `ScrapeConfig`, and `Probe` resources as scrape target sources.
+
+  <Expandable title="prometheusCR fields">
+    <ParamField path="spec.prometheusCR.enabled" type="boolean" default="false">
+      Enable discovery of Prometheus Operator CRs.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.scrapeInterval" type="string" default="30s">
+      Default scrape interval applied to all discovered targets. Overridden by intervals set in individual `ServiceMonitor`/`PodMonitor` objects.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.evaluationInterval" type="string" default="30s">
+      Default interval for rule evaluation.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.scrapeProtocols" type="array">
+      Protocols to negotiate during scraping, in preference order.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.scrapeClasses" type="array">
+      Scrape class objects as defined by [Prometheus Operator ScrapeClass](https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1.ScrapeClass).
+    </ParamField>
+    <ParamField path="spec.prometheusCR.serviceMonitorSelector" type="object">
+      Label selector for filtering `ServiceMonitor` resources. An empty selector matches all.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.serviceMonitorNamespaceSelector" type="object" default="{}">
+      Label selector for namespaces from which `ServiceMonitor` resources are discovered. Defaults to `{}` (all namespaces).
+    </ParamField>
+    <ParamField path="spec.prometheusCR.podMonitorSelector" type="object">
+      Label selector for filtering `PodMonitor` resources.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.podMonitorNamespaceSelector" type="object" default="{}">
+      Label selector for namespaces from which `PodMonitor` resources are discovered.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.scrapeConfigSelector" type="object">
+      Label selector for filtering `ScrapeConfig` resources.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.scrapeConfigNamespaceSelector" type="object" default="{}">
+      Label selector for namespaces from which `ScrapeConfig` resources are discovered.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.probeSelector" type="object">
+      Label selector for filtering `Probe` resources.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.probeNamespaceSelector" type="object" default="{}">
+      Label selector for namespaces from which `Probe` resources are discovered.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.allowNamespaces" type="array">
+      Allow-list of namespaces for Target Allocator API server interactions. Mutually exclusive with `denyNamespaces`.
+    </ParamField>
+    <ParamField path="spec.prometheusCR.denyNamespaces" type="array">
+      Deny-list of namespaces for Target Allocator API server interactions. Mutually exclusive with `allowNamespaces`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Observability
+
+<ParamField path="spec.observability" type="object">
+  Telemetry configuration for the Target Allocator itself.
+
+  <Expandable title="observability fields">
+    <ParamField path="spec.observability.metrics.enableMetrics" type="boolean" default="false">
+      When `true`, creates a `ServiceMonitor` for the Target Allocator.
+    </ParamField>
+    <ParamField path="spec.observability.metrics.extraLabels" type="object">
+      Additional labels for the generated `ServiceMonitor`.
+    </ParamField>
+    <ParamField path="spec.observability.metrics.disablePrometheusAnnotations" type="boolean" default="false">
+      Disables automatic Prometheus pod annotations.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Health Probes
+
+<ParamField path="spec.livenessProbe" type="object">
+  Liveness probe configuration for the Target Allocator container. Standard Kubernetes probe spec.
+</ParamField>
+
+<ParamField path="spec.readinessProbe" type="object">
+  Readiness probe configuration for the Target Allocator container. Standard Kubernetes probe spec.
+</ParamField>
+
+### Network Policy
+
+<ParamField path="spec.networkPolicy" type="object">
+  Network policy applied to the Target Allocator pods.
+</ParamField>
+
+## Status Fields
+
+<ParamField path="status.version" type="string">
+  Version of the managed Target Allocator operand.
+</ParamField>
+
+<ParamField path="status.image" type="string">
+  Container image currently in use for the Target Allocator.
+</ParamField>

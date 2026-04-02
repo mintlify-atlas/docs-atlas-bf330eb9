@@ -1,0 +1,295 @@
+---
+title: "OpAMPBridge"
+description: "API reference for the OpAMPBridge custom resource (opentelemetry.io/v1alpha1) for remote collector configuration via the OpAMP protocol."
+---
+
+## Overview
+
+The `OpAMPBridge` resource deploys an OpAMP (Open Agent Management Protocol) Bridge that connects OpenTelemetry Collectors to an OpAMP-compatible management server. This enables remote configuration, health reporting, and lifecycle management of collectors.
+
+| Field | Value |
+|-------|-------|
+| **API Group** | `opentelemetry.io` |
+| **API Version** | `v1alpha1` |
+| **Kind** | `OpAMPBridge` |
+| **Scope** | Namespaced |
+
+## Example
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpAMPBridge
+metadata:
+  name: my-opamp-bridge
+  namespace: observability
+spec:
+  endpoint: wss://opamp-server.example.com/v1/opamp
+  headers:
+    Authorization: "Bearer my-secret-token"
+  upgradeStrategy: automatic
+  replicas: 1
+  image: ghcr.io/open-telemetry/opentelemetry-operator/operator-opamp-bridge:latest
+  serviceAccount: opamp-bridge
+  imagePullPolicy: IfNotPresent
+  capabilities:
+    AcceptsRemoteConfig: true
+    ReportsEffectiveConfig: true
+    ReportsHealth: true
+    ReportsOwnMetrics: true
+    ReportsOwnLogs: true
+    ReportsOwnTraces: false
+    AcceptsOpAMPConnectionSettings: false
+    AcceptsOtherConnectionSettings: false
+    AcceptsRestartCommand: true
+    ReportsRemoteConfig: false
+  componentsAllowed:
+    receivers:
+      - otlp
+      - prometheus
+    processors:
+      - batch
+      - memory_limiter
+    exporters:
+      - otlp
+      - debug
+  description:
+    non_identifying_attributes:
+      cluster: my-k8s-cluster
+      region: us-east-1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  env:
+    - name: MY_POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8888"
+  tolerations:
+    - key: "node-role"
+      operator: "Equal"
+      value: "observability"
+      effect: "NoSchedule"
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: my-opamp-bridge
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+  podSecurityContext:
+    fsGroup: 2000
+```
+
+## Spec Fields
+
+### Connection
+
+<ParamField path="spec.endpoint" type="string" required>
+  The OpAMP backend server endpoint URI. Typically a WebSocket URL (e.g., `wss://opamp-server.example.com/v1/opamp`).
+</ParamField>
+
+<ParamField path="spec.headers" type="object">
+  Optional HTTP headers sent when connecting to the OpAMP server. Commonly used for authorization tokens or API keys.
+
+  ```yaml
+  headers:
+    Authorization: "Bearer my-api-token"
+    X-Custom-Header: "value"
+  ```
+</ParamField>
+
+### Capabilities
+
+<ParamField path="spec.capabilities" type="object" required>
+  Map of OpAMP capabilities supported by this bridge instance. Each key is a capability name and the value is a boolean indicating whether it is enabled.
+
+  | Capability | Description |
+  |------------|-------------|
+  | `AcceptsRemoteConfig` | The bridge can receive and apply configuration from the OpAMP server. |
+  | `ReportsEffectiveConfig` | The bridge reports its current active configuration back to the server. |
+  | `ReportsOwnTraces` | The bridge reports its own traces to the server. |
+  | `ReportsOwnMetrics` | The bridge reports its own metrics to the server. |
+  | `ReportsOwnLogs` | The bridge reports its own logs to the server. |
+  | `AcceptsOpAMPConnectionSettings` | The bridge accepts updated OpAMP connection settings from the server. |
+  | `AcceptsOtherConnectionSettings` | The bridge accepts other (non-OpAMP) connection settings. |
+  | `AcceptsRestartCommand` | The bridge accepts restart commands from the server. |
+  | `ReportsHealth` | The bridge reports component health status to the server. |
+  | `ReportsRemoteConfig` | The bridge reports the remote config it has received. |
+
+  Example:
+  ```yaml
+  capabilities:
+    AcceptsRemoteConfig: true
+    ReportsEffectiveConfig: true
+    ReportsHealth: true
+  ```
+</ParamField>
+
+### Components Allowlist
+
+<ParamField path="spec.componentsAllowed" type="object">
+  A map restricting which OpenTelemetry pipeline components are permitted in remotely delivered configurations. Keys are pipeline component types (`receivers`, `processors`, `exporters`, `extensions`). Values are lists of allowed component names. If not specified, all components are allowed.
+
+  ```yaml
+  componentsAllowed:
+    receivers:
+      - otlp
+      - prometheus
+    processors:
+      - batch
+    exporters:
+      - otlp
+  ```
+</ParamField>
+
+### Description
+
+<ParamField path="spec.description" type="object">
+  Customizes the non-identifying attributes reported to the OpAMP server as part of the agent description.
+
+  <Expandable title="description fields">
+    <ParamField path="spec.description.non_identifying_attributes" type="object" required>
+      Key-value pairs providing additional context about this bridge instance to the OpAMP server (e.g., cluster name, region, environment).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Upgrade and Lifecycle
+
+<ParamField path="spec.upgradeStrategy" type="string">
+  How the operator handles CR upgrades when a newer operator version is deployed.
+
+  | Value | Description |
+  |-------|-------------|
+  | `automatic` | Operator automatically applies upgrades. |
+  | `none` | No automatic upgrades; manual management required. |
+</ParamField>
+
+<ParamField path="spec.replicas" type="integer">
+  Number of OpAMP Bridge pod instances. Maximum is `1`. The OpAMP Bridge is designed to run as a single instance per CR.
+</ParamField>
+
+### Container Image
+
+<ParamField path="spec.image" type="string">
+  Container image for the OpAMP Bridge. If not set, the operator uses its bundled default.
+</ParamField>
+
+<ParamField path="spec.imagePullPolicy" type="string">
+  Image pull policy. One of `Always`, `Never`, or `IfNotPresent`.
+</ParamField>
+
+<ParamField path="spec.serviceAccount" type="string">
+  Name of an existing `ServiceAccount`. When set, the operator will not create one automatically.
+</ParamField>
+
+### Compute Resources
+
+<ParamField path="spec.resources" type="object">
+  Compute resource requirements for the OpAMP Bridge container.
+
+  <Expandable title="resources fields">
+    <ParamField path="spec.resources.requests" type="object">
+      Minimum resources (`cpu`, `memory`).
+    </ParamField>
+    <ParamField path="spec.resources.limits" type="object">
+      Maximum resources (`cpu`, `memory`).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Environment
+
+<ParamField path="spec.env" type="array">
+  Environment variables to set on the OpAMP Bridge pods.
+</ParamField>
+
+<ParamField path="spec.envFrom" type="array">
+  Sources for populating environment variables (`configMapRef`, `secretRef`).
+</ParamField>
+
+### Storage and Networking
+
+<ParamField path="spec.volumeMounts" type="array">
+  Volume mount points for the OpAMP Bridge container.
+</ParamField>
+
+<ParamField path="spec.volumes" type="array">
+  Volumes to attach to the OpAMP Bridge pod.
+</ParamField>
+
+<ParamField path="spec.ports" type="array">
+  Additional ports to expose via the OpAMP Bridge `Service`.
+</ParamField>
+
+<ParamField path="spec.hostNetwork" type="boolean" default="false">
+  Whether the pod should run in the host networking namespace.
+</ParamField>
+
+<ParamField path="spec.podDnsConfig" type="object">
+  Additional DNS configuration for the pod.
+</ParamField>
+
+<ParamField path="spec.ipFamilies" type="array">
+  IP families for the service (`IPv4`, `IPv6`).
+</ParamField>
+
+<ParamField path="spec.ipFamilyPolicy" type="string">
+  IP family policy for the service.
+</ParamField>
+
+### Scheduling
+
+<ParamField path="spec.nodeSelector" type="object">
+  Node selector labels for scheduling OpAMP Bridge pods.
+</ParamField>
+
+<ParamField path="spec.tolerations" type="array">
+  Tolerations for scheduling on tainted nodes.
+</ParamField>
+
+<ParamField path="spec.affinity" type="object">
+  Affinity and anti-affinity rules.
+</ParamField>
+
+<ParamField path="spec.topologySpreadConstraints" type="array">
+  Controls how pods are spread across failure domains.
+</ParamField>
+
+<ParamField path="spec.priorityClassName" type="string">
+  Priority class for the OpAMP Bridge pods.
+</ParamField>
+
+### Security
+
+<ParamField path="spec.securityContext" type="object">
+  Container-level security context.
+</ParamField>
+
+<ParamField path="spec.podSecurityContext" type="object">
+  Pod-level security context.
+</ParamField>
+
+### Metadata
+
+<ParamField path="spec.podAnnotations" type="object">
+  Annotations attached to the OpAMP Bridge pods.
+</ParamField>
+
+## Status Fields
+
+<ParamField path="status.version" type="string">
+  Version of the managed OpAMP Bridge operand.
+</ParamField>

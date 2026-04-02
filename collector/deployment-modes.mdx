@@ -1,0 +1,271 @@
+---
+title: "Deployment Modes"
+description: "Run the OpenTelemetry Collector as a Deployment, DaemonSet, StatefulSet, or injected sidecar."
+---
+
+The `OpenTelemetryCollector` CRD exposes `.spec.mode` to control how the collector is deployed. There are four modes:
+
+| Mode | Value | Default |
+|---|---|---|
+| Deployment | `deployment` | Yes |
+| DaemonSet | `daemonset` | No |
+| StatefulSet | `statefulset` | No |
+| Sidecar | `sidecar` | No |
+
+<Tabs>
+  <Tab title="Deployment">
+    ## Deployment mode
+
+    **When to use:** General-purpose workloads, gateway collectors, or any scenario where you want a fixed number of replicas managed by a Kubernetes Deployment. This is the default mode.
+
+    ```yaml
+    apiVersion: opentelemetry.io/v1beta1
+    kind: OpenTelemetryCollector
+    metadata:
+      name: my-collector
+    spec:
+      mode: deployment
+      replicas: 2
+      config:
+        receivers:
+          otlp:
+            protocols:
+              grpc:
+                endpoint: 0.0.0.0:4317
+              http:
+                endpoint: 0.0.0.0:4318
+        exporters:
+          debug: {}
+        service:
+          pipelines:
+            traces:
+              receivers: [otlp]
+              exporters: [debug]
+    ```
+
+    You can configure the rolling update strategy using `spec.deploymentUpdateStrategy`:
+
+    ```yaml
+    spec:
+      mode: deployment
+      deploymentUpdateStrategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 1
+          maxSurge: 1
+    ```
+  </Tab>
+  <Tab title="DaemonSet">
+    ## DaemonSet mode
+
+    **When to use:** Node-level collection — for example, collecting host metrics, reading log files from `/var/log`, or scraping node-local targets. One collector pod runs on every node.
+
+    ```yaml
+    apiVersion: opentelemetry.io/v1beta1
+    kind: OpenTelemetryCollector
+    metadata:
+      name: node-collector
+    spec:
+      mode: daemonset
+      config:
+        receivers:
+          otlp:
+            protocols:
+              grpc:
+                endpoint: 0.0.0.0:4317
+        exporters:
+          debug: {}
+        service:
+          pipelines:
+            traces:
+              receivers: [otlp]
+              exporters: [debug]
+    ```
+
+    Configure the DaemonSet update strategy with `spec.daemonSetUpdateStrategy`:
+
+    ```yaml
+    spec:
+      mode: daemonset
+      daemonSetUpdateStrategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 1
+    ```
+
+    <Note>
+    The Target Allocator's `per-node` allocation strategy is designed for use with DaemonSet mode. See [Target Allocator](/collector/target-allocator) for details.
+    </Note>
+  </Tab>
+  <Tab title="StatefulSet">
+    ## StatefulSet mode
+
+    **When to use:** Workloads that require stable pod identities, persistent storage, or ordered scaling. Required when using the Target Allocator.
+
+    ```yaml
+    apiVersion: opentelemetry.io/v1beta1
+    kind: OpenTelemetryCollector
+    metadata:
+      name: stateful-collector
+    spec:
+      mode: statefulset
+      replicas: 3
+      config:
+        receivers:
+          otlp:
+            protocols:
+              grpc:
+                endpoint: 0.0.0.0:4317
+        exporters:
+          debug: {}
+        service:
+          pipelines:
+            traces:
+              receivers: [otlp]
+              exporters: [debug]
+    ```
+
+    StatefulSet-specific fields are available under `spec`:
+
+    ```yaml
+    spec:
+      mode: statefulset
+      volumeClaimTemplates:
+        - metadata:
+            name: collector-data
+          spec:
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests:
+                storage: 10Gi
+      podManagementPolicy: Parallel
+      persistentVolumeClaimRetentionPolicy:
+        whenDeleted: Retain
+        whenScaled: Delete
+    ```
+  </Tab>
+  <Tab title="Sidecar">
+    ## Sidecar mode
+
+    **When to use:** Injecting a collector directly into application pods. The collector runs as a sidecar container alongside your application, sharing the same network namespace.
+
+    <Steps>
+      <Step title="Create the sidecar collector resource">
+        Define an `OpenTelemetryCollector` with `mode: sidecar`. This resource specifies the configuration for the injected sidecar.
+
+        ```yaml
+        apiVersion: opentelemetry.io/v1beta1
+        kind: OpenTelemetryCollector
+        metadata:
+          name: sidecar-for-my-app
+        spec:
+          mode: sidecar
+          config:
+            receivers:
+              otlp:
+                protocols:
+                  grpc:
+                    endpoint: 0.0.0.0:4317
+            exporters:
+              debug: {}
+            service:
+              pipelines:
+                traces:
+                  receivers: [otlp]
+                  exporters: [debug]
+        ```
+      </Step>
+      <Step title="Annotate the pod to inject the sidecar">
+        Add the `sidecar.opentelemetry.io/inject` annotation to the pod's `metadata.annotations`.
+
+        ```yaml
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          name: myapp
+          annotations:
+            sidecar.opentelemetry.io/inject: "true"
+        spec:
+          containers:
+          - name: myapp
+            image: myapp:latest
+        ```
+      </Step>
+    </Steps>
+
+    <Warning>
+    When annotating a `Deployment` or `StatefulSet`, place the annotation in the **`PodTemplate`** metadata, not the top-level resource metadata. The webhook only processes pod creation, not the workload controller itself.
+
+    ```yaml
+    spec:
+      template:
+        metadata:
+          annotations:
+            sidecar.opentelemetry.io/inject: "true"  # correct
+    metadata:
+      annotations:
+        sidecar.opentelemetry.io/inject: "true"  # wrong — has no effect
+    ```
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Sidecar injection
+
+The `sidecar.opentelemetry.io/inject` annotation controls whether a sidecar is injected into a pod. The annotation can be set on the **pod** or on the **namespace**.
+
+### Annotation values
+
+| Value | Effect |
+|---|---|
+| `"true"` | Inject the sidecar using the single `sidecar` mode collector in the namespace |
+| `"sidecar-for-my-app"` | Inject using the named collector in the current namespace |
+| `"my-other-namespace/my-collector"` | Inject using the named collector from a different namespace |
+| `"false"` | Do not inject |
+
+### Annotation precedence
+
+When both a pod annotation and a namespace annotation are set, the following rules apply:
+
+1. **Pod annotation wins** if it is set to a concrete instance name or to `"false"`.
+2. **Namespace annotation is used** when the pod annotation is absent or set to `"true"`, and the namespace annotation is set to a concrete instance or to `"false"`.
+
+This means you can opt a namespace into sidecar injection by default, and then opt individual pods out using `"false"`.
+
+### OTEL_RESOURCE_ATTRIBUTES
+
+When a sidecar is injected, the operator automatically sets the `OTEL_RESOURCE_ATTRIBUTES` environment variable on the collector container. It is populated with Kubernetes resource attributes (pod name, namespace, node name, etc.), ready to be consumed by the [resourcedetection processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/resourcedetectionprocessor).
+
+## Using imagePullSecrets
+
+To pull collector images from a private registry, associate `imagePullSecrets` with a `ServiceAccount` and reference that account from the collector spec.
+
+<Steps>
+  <Step title="Create a ServiceAccount">
+    ```bash
+    kubectl create serviceaccount collector-sa
+    ```
+  </Step>
+  <Step title="Create the image pull secret">
+    ```bash
+    kubectl create secret docker-registry my-registry-secret \
+      --docker-server=registry.example.com \
+      --docker-username=MY_USERNAME \
+      --docker-password=MY_PASSWORD \
+      --docker-email=MY_EMAIL
+    ```
+  </Step>
+  <Step title="Attach the secret to the ServiceAccount">
+    ```bash
+    kubectl patch serviceaccount collector-sa \
+      -p '{"imagePullSecrets": [{"name": "my-registry-secret"}]}'
+    ```
+  </Step>
+  <Step title="Reference the ServiceAccount in the collector spec">
+    ```yaml
+    spec:
+      serviceAccount: collector-sa
+      image: registry.example.com/my-collector:latest
+    ```
+  </Step>
+</Steps>

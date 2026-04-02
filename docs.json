@@ -1,122 +1,92 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "OpenTelemetry Operator",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#386edf",
+    "light": "#94bcdc",
+    "dark": "#040404"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/7b7e9287-e252-441a-bda8-43d2b4ca7ddd.jpg",
+  "logo": {
+    "light": "https://media.brand.dev/e80633e9-cb5d-4eb6-9052-7604ef5fa2f4.svg",
+    "dark": "https://media.brand.dev/e80633e9-cb5d-4eb6-9052-7604ef5fa2f4.svg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/open-telemetry/opentelemetry-operator"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/open-telemetry/opentelemetry-operator"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "OpenTelemetry Collector",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "collector/overview",
+              "collector/deployment-modes",
+              "collector/target-allocator",
+              "collector/autoscaling"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Auto-Instrumentation",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "instrumentation/overview",
+              "instrumentation/languages",
+              "instrumentation/resource-attributes",
+              "instrumentation/multi-container"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Advanced Components",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "components/opamp-bridge",
+              "components/cluster-observability"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/helm",
+              "operations/upgrades",
+              "operations/compatibility",
+              "operations/troubleshooting"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Custom Resources",
             "pages": [
-              "api-reference/introduction"
-            ]
-          },
-          {
-            "group": "Endpoint examples",
-            "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/opentelemetrycollector",
+              "api/instrumentation",
+              "api/targetallocator",
+              "api/opampbridge",
+              "api/clusterobservability"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

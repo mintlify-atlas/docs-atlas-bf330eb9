@@ -1,0 +1,135 @@
+---
+title: "Installation"
+description: "Install the OpenTelemetry Operator into your Kubernetes cluster using kubectl or Helm."
+---
+
+## Prerequisites
+
+Before installing the operator, ensure the following are available:
+
+- **kubectl** configured to connect to your target cluster
+- **cert-manager v1** installed in the cluster — the operator uses it to manage TLS certificates for its admission webhooks
+
+Install cert-manager if it is not already present:
+
+```bash
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+```
+
+Wait for cert-manager to be ready before proceeding:
+
+```bash
+kubectl wait --for=condition=Available deployment --all -n cert-manager --timeout=120s
+```
+
+<Note>
+  cert-manager is required. The operator's admission webhooks use TLS certificates that cert-manager provisions and rotates automatically. Installation will succeed without cert-manager, but the webhooks will fail to start.
+</Note>
+
+## Install the operator
+
+<Tabs>
+  <Tab title="kubectl">
+    Apply the latest release manifest directly from GitHub:
+
+    ```bash
+    kubectl apply -f https://github.com/open-telemetry/opentelemetry-operator/releases/latest/download/opentelemetry-operator.yaml
+    ```
+
+    This creates the `opentelemetry-operator-system` namespace and deploys the operator controller into it.
+
+    To install a specific version, replace `latest` with the release tag:
+
+    ```bash
+    kubectl apply -f https://github.com/open-telemetry/opentelemetry-operator/releases/download/v0.148.0/opentelemetry-operator.yaml
+    ```
+  </Tab>
+  <Tab title="Helm">
+    The operator is available as a Helm chart from the [opentelemetry-helm-charts](https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-operator) repository.
+
+    Add the OpenTelemetry Helm repository:
+
+    ```bash
+    helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+    helm repo update
+    ```
+
+    Install the operator into its own namespace:
+
+    ```bash
+    helm install opentelemetry-operator open-telemetry/opentelemetry-operator \
+      --namespace opentelemetry-operator-system \
+      --create-namespace \
+      --set "manager.collectorImage.repository=otel/opentelemetry-collector-k8s"
+    ```
+
+    For all available configuration options, refer to the [chart documentation](https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-operator).
+  </Tab>
+</Tabs>
+
+## Verify installation
+
+Check that the operator deployment is ready:
+
+```bash
+kubectl get deployment -n opentelemetry-operator-system
+```
+
+Expected output:
+
+```
+NAME                                 READY   UP-TO-DATE   AVAILABLE   AGE
+opentelemetry-operator-controller-manager   1/1     1            1           30s
+```
+
+Confirm the Custom Resource Definitions are installed:
+
+```bash
+kubectl get crd | grep opentelemetry
+```
+
+Expected output:
+
+```
+instrumentations.opentelemetry.io
+opampbridges.opentelemetry.io
+opentelemetrycollectors.opentelemetry.io
+targetallocators.opentelemetry.io
+```
+
+## Private GKE clusters
+
+On private Google Kubernetes Engine (GKE) clusters, the control plane cannot reach worker nodes on port `9443/tcp` by default. The operator's admission webhooks listen on this port.
+
+You must add a firewall rule that allows the master node IP range to reach worker nodes on port `9443/tcp`:
+
+```bash
+gcloud compute firewall-rules create allow-otel-operator-webhook \
+  --allow tcp:9443 \
+  --source-ranges <master-ip-range> \
+  --target-tags <worker-node-tags> \
+  --description "Allow GKE master to reach OpenTelemetry Operator webhooks"
+```
+
+Replace `<master-ip-range>` with the value from your cluster's master IP range, and `<worker-node-tags>` with the network tags applied to your worker node instances.
+
+Alternatively, update the existing firewall rule that allows port `80/tcp`, `443/tcp`, and `10254/tcp` to also allow `9443/tcp`. See the [GKE documentation on adding firewall rules](https://cloud.google.com/kubernetes-engine/docs/how-to/private-clusters#add_firewall_rules) for details.
+
+## Namespace
+
+The operator is installed into the `opentelemetry-operator-system` namespace. You can create OpenTelemetry Custom Resources in any namespace — the operator watches all namespaces by default.
+
+```bash
+kubectl get all -n opentelemetry-operator-system
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Deploy your first Collector and enable auto-instrumentation.
+  </Card>
+  <Card title="Collector overview" icon="server" href="/collector/overview">
+    Learn about deployment modes and configuration options.
+  </Card>
+</CardGroup>

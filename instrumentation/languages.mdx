@@ -1,0 +1,375 @@
+---
+title: "Language Support"
+description: "Per-language annotation reference and configuration options for OpenTelemetry auto-instrumentation injection."
+---
+
+The operator supports auto-instrumentation for seven languages. Each language is enabled by placing an annotation on the pod (or namespace, Deployment, StatefulSet, etc.) and optionally configuring language-specific options in the `Instrumentation` CR.
+
+<Tabs>
+  <Tab title="Java">
+    **Current version:** `1.33.6`
+
+    **Annotation:**
+
+    ```bash
+    instrumentation.opentelemetry.io/inject-java: "true"
+    ```
+
+    **Example:**
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: my-java-app
+    spec:
+      template:
+        metadata:
+          annotations:
+            instrumentation.opentelemetry.io/inject-java: "true"
+        spec:
+          containers:
+            - name: myapp
+              image: my-java-app:latest
+    ```
+
+    **Instrumentation CR options:**
+
+    ```yaml
+    spec:
+      java:
+        image: your-custom-image:java  # optional image override
+        env:
+          - name: OTEL_JAVAAGENT_DEBUG
+            value: "true"
+        extensions:
+          - image: my-extension-image:latest
+            dir: /extensions
+    ```
+
+    Java auto-instrumentation supports **extensions** — additional JAR files that extend the agent. All extension JARs are copied to a single directory; if a JAR with the same name already exists it will be overwritten.
+
+    <Note>
+    The feature gate `enable-java-instrumentation` defaults to `true`. No flag is needed unless you want to disable Java instrumentation.
+    </Note>
+  </Tab>
+
+  <Tab title="Node.js">
+    **Current version:** `0.71.0`
+
+    **Annotation:**
+
+    ```bash
+    instrumentation.opentelemetry.io/inject-nodejs: "true"
+    ```
+
+    **Example:**
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: my-nodejs-app
+    spec:
+      template:
+        metadata:
+          annotations:
+            instrumentation.opentelemetry.io/inject-nodejs: "true"
+        spec:
+          containers:
+            - name: myapp
+              image: my-nodejs-app:latest
+    ```
+
+    **Instrumentation CR options:**
+
+    ```yaml
+    spec:
+      nodejs:
+        image: your-custom-image:nodejs  # optional image override
+        env:
+          - name: OTEL_LOG_LEVEL
+            value: verbose
+    ```
+
+    <Note>
+    The feature gate `enable-nodejs-instrumentation` defaults to `true`.
+    </Note>
+  </Tab>
+
+  <Tab title="Python">
+    **Current version:** `0.60b1`
+
+    **Annotation:**
+
+    ```bash
+    instrumentation.opentelemetry.io/inject-python: "true"
+    ```
+
+    Python auto-instrumentation also supports a platform annotation to handle images built against different C libraries:
+
+    ```bash
+    # For Linux glibc-based images (default, annotation can be omitted)
+    instrumentation.opentelemetry.io/otel-python-platform: "glibc"
+
+    # For Linux musl-based images (e.g. Alpine)
+    instrumentation.opentelemetry.io/otel-python-platform: "musl"
+    ```
+
+    **Example with musl:**
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: my-python-app
+    spec:
+      template:
+        metadata:
+          annotations:
+            instrumentation.opentelemetry.io/inject-python: "true"
+            instrumentation.opentelemetry.io/otel-python-platform: "musl"
+        spec:
+          containers:
+            - name: myapp
+              image: my-python-alpine-app:latest
+    ```
+
+    **Instrumentation CR options:**
+
+    ```yaml
+    spec:
+      python:
+        env:
+          # Python uses http/proto by default; override endpoint if collector is on 4317
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://otel-collector:4318
+    ```
+
+    <Note>
+    The feature gate `enable-python-instrumentation` defaults to `true`.
+    </Note>
+  </Tab>
+
+  <Tab title=".NET">
+    **Current version:** `1.2.0`
+
+    **Annotation:**
+
+    ```bash
+    instrumentation.opentelemetry.io/inject-dotnet: "true"
+    ```
+
+    .NET auto-instrumentation also supports a runtime identifier annotation corresponding to .NET [Runtime Identifiers (RIDs)](https://learn.microsoft.com/en-us/dotnet/core/rid-catalog):
+
+    ```bash
+    # For Linux glibc-based images (default, annotation can be omitted)
+    instrumentation.opentelemetry.io/otel-dotnet-auto-runtime: "linux-x64"
+
+    # For Linux musl-based images (e.g. Alpine)
+    instrumentation.opentelemetry.io/otel-dotnet-auto-runtime: "linux-musl-x64"
+    ```
+
+    **Example with musl:**
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: my-dotnet-app
+    spec:
+      template:
+        metadata:
+          annotations:
+            instrumentation.opentelemetry.io/inject-dotnet: "true"
+            instrumentation.opentelemetry.io/otel-dotnet-auto-runtime: "linux-musl-x64"
+        spec:
+          containers:
+            - name: myapp
+              image: my-dotnet-alpine-app:latest
+    ```
+
+    **Instrumentation CR options:**
+
+    ```yaml
+    spec:
+      dotnet:
+        env:
+          # DotNet uses http/proto by default; override endpoint if collector is on 4317
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://otel-collector:4318
+    ```
+
+    <Note>
+    By default, the operator sets `OTEL_DOTNET_AUTO_TRACES_ENABLED_INSTRUMENTATIONS` to all available instrumentations supported by the consumed `opentelemetry-dotnet-instrumentation` release (e.g. `AspNet,HttpClient,SqlClient`). Override this by setting the environment variable explicitly in the `Instrumentation` CR or the container spec.
+    </Note>
+
+    <Note>
+    The feature gate `enable-dotnet-instrumentation` defaults to `true`.
+    </Note>
+  </Tab>
+
+  <Tab title="Go">
+    **Current version:** `v0.23.0`
+
+    **Annotations:**
+
+    ```bash
+    instrumentation.opentelemetry.io/inject-go: "true"
+    instrumentation.opentelemetry.io/otel-go-auto-target-exe: "/path/to/container/executable"
+    ```
+
+    <Warning>
+    `OTEL_GO_AUTO_TARGET_EXE` is **required** for Go auto-instrumentation. You must provide a valid path to the executable inside the container via the annotation or via `env` in the `Instrumentation` CR. If this value is not set, instrumentation injection is aborted and the pod is left unchanged.
+    </Warning>
+
+    The annotation takes precedence over the `Instrumentation` CR `env` value.
+
+    **Example:**
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: my-go-app
+    spec:
+      template:
+        metadata:
+          annotations:
+            instrumentation.opentelemetry.io/inject-go: "true"
+            instrumentation.opentelemetry.io/otel-go-auto-target-exe: "/app/server"
+        spec:
+          containers:
+            - name: myapp
+              image: my-go-app:latest
+    ```
+
+    **Security context:**
+
+    Go auto-instrumentation uses eBPF and requires elevated permissions. The following `securityContext` is set automatically by the operator:
+
+    ```yaml
+    securityContext:
+      privileged: true
+      runAsUser: 0
+    ```
+
+    **Instrumentation CR options:**
+
+    ```yaml
+    spec:
+      go:
+        env:
+          # Go uses http/proto by default; override endpoint if collector is on 4317
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://otel-collector:4318
+    ```
+
+    <Warning>
+    Go auto-instrumentation **does not** support multi-container pods. Only the first container in the pod spec will be instrumented. The feature gate `enable-go-instrumentation` defaults to `false` and must be explicitly enabled.
+    </Warning>
+  </Tab>
+
+  <Tab title="Apache HTTPD">
+    **Current version:** `1.0.4`
+
+    **Annotation:**
+
+    ```bash
+    instrumentation.opentelemetry.io/inject-apache-httpd: "true"
+    ```
+
+    By default, instrumentation assumes:
+    - HTTPD version **2.4**
+    - Configuration directory **`/usr/local/apache2/conf`** (as in the official `docker.io/httpd:latest` image)
+
+    Override these defaults in the `Instrumentation` CR if needed:
+
+    ```yaml
+    apiVersion: opentelemetry.io/v1alpha1
+    kind: Instrumentation
+    metadata:
+      name: my-instrumentation
+    spec:
+      apacheHttpd:
+        version: "2.2"
+        configPath: /your-custom-config-path
+        attrs:
+          - name: ApacheModuleOtelMaxQueueSize
+            value: "4096"
+    ```
+
+    The `attrs` field accepts agent-specific attributes documented at [otel-webserver-module](https://github.com/open-telemetry/opentelemetry-cpp-contrib/tree/main/instrumentation/otel-webserver-module).
+
+    <Note>
+    The feature gate `enable-apache-httpd-instrumentation` defaults to `true`.
+    </Note>
+  </Tab>
+
+  <Tab title="Nginx">
+    **Current version:** `1.0.4`
+
+    **Annotation:**
+
+    ```bash
+    instrumentation.opentelemetry.io/inject-nginx: "true"
+    ```
+
+    Supported Nginx versions: **1.22.0**, **1.23.0**, **1.23.1**.
+
+    Default configuration file path: **`/etc/nginx/nginx.conf`**.
+
+    **Requirements:**
+    - A `conf.d` directory must exist in the same directory as the Nginx configuration file.
+    - The `http { ... }` section of `nginx.conf` must contain an `include <config-file-dir-path>/conf.d/*.conf;` directive (as in the default Nginx configuration).
+
+    Override the configuration file path or set agent attributes in the `Instrumentation` CR:
+
+    ```yaml
+    apiVersion: opentelemetry.io/v1alpha1
+    kind: Instrumentation
+    metadata:
+      name: my-instrumentation
+    spec:
+      nginx:
+        configFile: /my/custom-dir/custom-nginx.conf
+        attrs:
+          - name: NginxModuleOtelMaxQueueSize
+            value: "4096"
+    ```
+
+    The `attrs` field accepts agent-specific attributes documented at [otel-webserver-module](https://github.com/open-telemetry/opentelemetry-cpp-contrib/tree/main/instrumentation/otel-webserver-module).
+
+    <Note>
+    The feature gate `enable-nginx-instrumentation` defaults to `false` and must be explicitly enabled.
+    </Note>
+  </Tab>
+
+  <Tab title="SDK only">
+    For applications that cannot be auto-instrumented but should still receive OpenTelemetry SDK environment variables, use `inject-sdk`:
+
+    ```bash
+    instrumentation.opentelemetry.io/inject-sdk: "true"
+    ```
+
+    This injects environment variables such as `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`, and `OTEL_EXPORTER_OTLP_ENDPOINT` without providing the SDK itself. The application must already include the OpenTelemetry SDK and will pick up these variables at startup.
+
+    **Example:**
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: my-custom-app
+    spec:
+      template:
+        metadata:
+          annotations:
+            instrumentation.opentelemetry.io/inject-sdk: "true"
+        spec:
+          containers:
+            - name: myapp
+              image: my-app-with-otel-sdk:latest
+    ```
+  </Tab>
+</Tabs>

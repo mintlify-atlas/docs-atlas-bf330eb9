@@ -1,97 +1,100 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "OpenTelemetry Operator for Kubernetes"
+description: "Manage OpenTelemetry Collectors and automatically instrument your applications running in Kubernetes."
 ---
 
-## Setting up
+The OpenTelemetry Operator is a Kubernetes Operator that manages the full lifecycle of [OpenTelemetry Collectors](https://github.com/open-telemetry/opentelemetry-collector) and automates the injection of OpenTelemetry instrumentation libraries into your workloads — no code changes required.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install the operator into your Kubernetes cluster using kubectl or Helm.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Deploy your first OpenTelemetry Collector in minutes.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Auto-Instrumentation" icon="wand-magic-sparkles" href="/instrumentation/overview">
+    Automatically inject tracing, metrics, and logging into your applications.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/opentelemetrycollector">
+    Explore the full Custom Resource API for all operator components.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What the operator manages
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="OpenTelemetry Collector" icon="server" href="/collector/overview">
+    Deploy and manage Collectors as Deployments, DaemonSets, StatefulSets, or Sidecars.
+  </Card>
+  <Card title="Target Allocator" icon="bullseye" href="/collector/target-allocator">
+    Distribute Prometheus scrape targets evenly across a pool of Collectors.
+  </Card>
+  <Card title="OpAMP Bridge" icon="bridge" href="/components/opamp-bridge">
+    Remotely manage Collector configurations via the OpAMP protocol.
+  </Card>
+  <Card title="Cluster Observability" icon="eye" href="/components/cluster-observability">
+    Deploy cluster-wide observability with a single Custom Resource.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Get started
 
-## Need inspiration?
+<Steps>
+  <Step title="Install cert-manager">
+    The operator requires cert-manager for webhook TLS certificates.
+    ```bash
+    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+    ```
+  </Step>
+  <Step title="Install the operator">
+    Apply the latest operator release manifest to your cluster.
+    ```bash
+    kubectl apply -f https://github.com/open-telemetry/opentelemetry-operator/releases/latest/download/opentelemetry-operator.yaml
+    ```
+  </Step>
+  <Step title="Create a Collector">
+    Deploy an OpenTelemetry Collector instance using the `OpenTelemetryCollector` CRD.
+    ```yaml
+    apiVersion: opentelemetry.io/v1beta1
+    kind: OpenTelemetryCollector
+    metadata:
+      name: my-collector
+    spec:
+      config:
+        receivers:
+          otlp:
+            protocols:
+              grpc:
+                endpoint: 0.0.0.0:4317
+              http:
+                endpoint: 0.0.0.0:4318
+        exporters:
+          debug: {}
+        service:
+          pipelines:
+            traces:
+              receivers: [otlp]
+              exporters: [debug]
+    ```
+  </Step>
+  <Step title="Enable auto-instrumentation">
+    Create an `Instrumentation` resource and annotate your pods to inject tracing automatically.
+    ```bash
+    instrumentation.opentelemetry.io/inject-java: "true"
+    ```
+  </Step>
+</Steps>
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+## Supported instrumentation languages
+
+The operator supports automatic instrumentation injection for the following languages:
+
+| Language | Annotation | Default |
+|---|---|---|
+| Java | `instrumentation.opentelemetry.io/inject-java` | Enabled |
+| Node.js | `instrumentation.opentelemetry.io/inject-nodejs` | Enabled |
+| Python | `instrumentation.opentelemetry.io/inject-python` | Enabled |
+| .NET | `instrumentation.opentelemetry.io/inject-dotnet` | Enabled |
+| Apache HTTPD | `instrumentation.opentelemetry.io/inject-apache-httpd` | Enabled |
+| Go | `instrumentation.opentelemetry.io/inject-go` | Disabled |
+| Nginx | `instrumentation.opentelemetry.io/inject-nginx` | Disabled |

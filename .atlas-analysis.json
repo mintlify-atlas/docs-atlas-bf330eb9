@@ -1,0 +1,101 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "OpenTelemetry Operator",
+  "projectDescription": "A Kubernetes Operator that manages OpenTelemetry Collector deployments and automates instrumentation injection for applications running in Kubernetes clusters.",
+  "theme": "aspen",
+  "primaryColor": "#386edf",
+  "lightColor": "#94bcdc",
+  "darkColor": "#040404",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "OpenTelemetry Collector",
+            "pages": [
+              "collector/overview",
+              "collector/deployment-modes",
+              "collector/target-allocator",
+              "collector/autoscaling"
+            ]
+          },
+          {
+            "group": "Auto-Instrumentation",
+            "pages": [
+              "instrumentation/overview",
+              "instrumentation/languages",
+              "instrumentation/resource-attributes",
+              "instrumentation/multi-container"
+            ]
+          },
+          {
+            "group": "Advanced Components",
+            "pages": [
+              "components/opamp-bridge",
+              "components/cluster-observability"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/helm",
+              "operations/upgrades",
+              "operations/compatibility",
+              "operations/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Custom Resources",
+            "pages": [
+              "api/opentelemetrycollector",
+              "api/instrumentation",
+              "api/targetallocator",
+              "api/opampbridge",
+              "api/clusterobservability"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Manages OpenTelemetry Collector deployments as Kubernetes CRDs (Deployment, DaemonSet, StatefulSet, Sidecar modes)",
+    "Automatic injection of OpenTelemetry auto-instrumentation for Java, NodeJS, Python, .NET, Go, Apache HTTPD, and Nginx",
+    "Target Allocator for distributed Prometheus scrape target management across Collector pools",
+    "OpAMP Bridge for remote configuration management of Collectors via OpAMP protocol",
+    "ClusterObservability CR for cluster-wide observability setup with a single resource",
+    "Prometheus Custom Resource (ServiceMonitor/PodMonitor) support for service discovery",
+    "Automatic resource attribute injection from Kubernetes pod metadata and annotations",
+    "Operator Lifecycle Manager (OLM) support for enterprise Kubernetes deployments"
+  ],
+  "publicApiSurface": [
+    "OpenTelemetryCollector (opentelemetry.io/v1beta1) - Main CRD for Collector management",
+    "Instrumentation (opentelemetry.io/v1alpha1) - CRD for auto-instrumentation configuration",
+    "TargetAllocator (opentelemetry.io/v1alpha1) - Standalone CRD for Prometheus target allocation",
+    "OpAMPBridge (opentelemetry.io/v1alpha1) - CRD for OpAMP protocol bridge",
+    "ClusterObservability (opentelemetry.io/v1alpha1) - CRD for cluster-wide observability",
+    "sidecar.opentelemetry.io/inject pod annotation - triggers sidecar collector injection",
+    "instrumentation.opentelemetry.io/inject-java pod annotation - triggers Java auto-instrumentation",
+    "instrumentation.opentelemetry.io/inject-nodejs pod annotation - triggers NodeJS auto-instrumentation",
+    "instrumentation.opentelemetry.io/inject-python pod annotation - triggers Python auto-instrumentation",
+    "instrumentation.opentelemetry.io/inject-dotnet pod annotation - triggers .NET auto-instrumentation",
+    "instrumentation.opentelemetry.io/inject-go pod annotation - triggers Go auto-instrumentation",
+    "instrumentation.opentelemetry.io/inject-apache-httpd pod annotation - triggers Apache HTTPD auto-instrumentation",
+    "instrumentation.opentelemetry.io/inject-nginx pod annotation - triggers Nginx auto-instrumentation",
+    "resource.opentelemetry.io/<attribute> pod annotation - sets OpenTelemetry resource attributes"
+  ]
+}

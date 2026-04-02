@@ -1,0 +1,166 @@
+---
+title: "Autoscaling"
+description: "Configure HorizontalPodAutoscaler support for OpenTelemetry Collector Deployments and StatefulSets."
+---
+
+The `OpenTelemetryCollector` CRD supports Kubernetes `HorizontalPodAutoscaler` (HPA) through the `spec.autoscaler` field. When configured, the operator creates and manages an HPA resource for the collector workload.
+
+<Warning>
+HPA is only supported for `deployment` and `statefulset` modes. It does not apply to `daemonset` or `sidecar` modes.
+</Warning>
+
+## Enabling autoscaling
+
+Set `spec.autoscaler.maxReplicas` to enable autoscaling. Setting `maxReplicas` is what activates the HPA; `minReplicas` and the metric targets are optional.
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: autoscaled-collector
+spec:
+  mode: deployment
+  autoscaler:
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilization: 80
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    exporters:
+      debug: {}
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [debug]
+```
+
+## Autoscaler fields
+
+| Field | Type | Description |
+|---|---|---|
+| `minReplicas` | int32 | Lower bound on the number of replicas. Must be at least 1. |
+| `maxReplicas` | int32 | Upper bound on the number of replicas. Setting this field activates autoscaling. |
+| `targetCPUUtilization` | int32 | Target average CPU utilization (percentage) across all replicas. Defaults to 90. |
+| `targetMemoryUtilization` | int32 | Target average memory utilization (percentage) across all replicas. |
+| `metrics` | MetricSpec[] | Custom HPA metrics of type `Pod`. Use this for custom metrics beyond CPU and memory. |
+| `behavior` | HorizontalPodAutoscalerBehavior | Fine-grained control over scale-up and scale-down behavior. |
+
+## Scaling on CPU and memory
+
+Scale on CPU, memory, or both:
+
+```yaml
+spec:
+  autoscaler:
+    minReplicas: 1
+    maxReplicas: 8
+    targetCPUUtilization: 75
+    targetMemoryUtilization: 80
+```
+
+## Custom pod metrics
+
+Use `spec.autoscaler.metrics` to scale on custom pod-level metrics. Only `type: Pods` is supported:
+
+```yaml
+spec:
+  autoscaler:
+    minReplicas: 2
+    maxReplicas: 20
+    metrics:
+      - type: Pods
+        pods:
+          metric:
+            name: otelcol_processor_refused_spans
+          target:
+            type: AverageValue
+            averageValue: "1000"
+```
+
+<Note>
+Use `spec.autoscaler.targetCPUUtilization` or `spec.autoscaler.targetMemoryUtilization` for the common CPU and memory resource metrics rather than defining them in the `metrics` array.
+</Note>
+
+## Scale behavior
+
+`spec.autoscaler.behavior` maps directly to the Kubernetes HPA `behavior` field. Use it to control scale-up and scale-down rates and stabilization windows:
+
+```yaml
+spec:
+  autoscaler:
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilization: 80
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Pods
+            value: 4
+            periodSeconds: 15
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 25
+            periodSeconds: 60
+```
+
+This example scales up quickly (up to 4 pods every 15 seconds with no stabilization) but scales down slowly (at most 25% of pods per minute, with a 5-minute stabilization window).
+
+## StatefulSet-specific fields
+
+When using `mode: statefulset`, you have access to additional fields for persistent storage and pod management alongside autoscaling:
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: stateful-autoscaled
+spec:
+  mode: statefulset
+  autoscaler:
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilization: 80
+  podManagementPolicy: Parallel
+  volumeClaimTemplates:
+    - metadata:
+        name: collector-data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 5Gi
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Delete
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    exporters:
+      debug: {}
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [debug]
+```
+
+<Tip>
+Set `podManagementPolicy: Parallel` to scale StatefulSet pods up and down simultaneously rather than one at a time. This reduces scaling latency when combined with an HPA.
+</Tip>
+
+## Relationship to `spec.replicas`
+
+`spec.replicas` sets a static replica count and is ignored when autoscaling is active. Use `spec.autoscaler.minReplicas` and `spec.autoscaler.maxReplicas` to control the replica range when HPA is enabled.

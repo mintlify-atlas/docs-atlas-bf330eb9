@@ -1,0 +1,433 @@
+---
+title: "Instrumentation"
+description: "API reference for the Instrumentation custom resource (opentelemetry.io/v1alpha1) used to configure automatic OpenTelemetry SDK injection."
+---
+
+## Overview
+
+The `Instrumentation` resource configures automatic OpenTelemetry SDK injection for application pods via the operator's mutation webhook. Annotate workloads with `instrumentation.opentelemetry.io/inject-<language>: "true"` (or a resource name) to trigger injection.
+
+| Field | Value |
+|-------|-------|
+| **API Group** | `opentelemetry.io` |
+| **API Version** | `v1alpha1` |
+| **Kind** | `Instrumentation` |
+| **Short names** | `otelinst`, `otelinsts` |
+| **Scope** | Namespaced |
+
+## Example
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: my-instrumentation
+  namespace: default
+spec:
+  exporter:
+    endpoint: http://otel-collector:4318
+  resource:
+    resourceAttributes:
+      environment: production
+      team: platform
+    addK8sUIDAttributes: true
+  propagators:
+    - tracecontext
+    - baggage
+    - b3
+  sampler:
+    type: parentbased_traceidratio
+    argument: "0.25"
+  defaults:
+    useLabelsForResourceAttributes: true
+  imagePullPolicy: IfNotPresent
+  env:
+    - name: OTEL_LOG_LEVEL
+      value: info
+  java:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:latest
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+    env:
+      - name: OTEL_INSTRUMENTATION_JDBC_ENABLED
+        value: "true"
+  nodejs:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:latest
+    resources:
+      requests:
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+  python:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:latest
+    resources:
+      requests:
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+  dotnet:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-dotnet:latest
+  go:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-go:latest
+    env:
+      - name: OTEL_GO_AUTO_TARGET_EXE
+        value: /app/server
+  apacheHttpd:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-apache-httpd:latest
+    version: "2.4"
+    configPath: /usr/local/apache2/conf
+  nginx:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nginx:latest
+    configFile: /etc/nginx/nginx.conf
+```
+
+## Spec Fields
+
+### Exporter
+
+<ParamField path="spec.exporter" type="object">
+  OTLP exporter configuration. Defines where instrumented applications should send telemetry data.
+
+  <Expandable title="exporter fields">
+    <ParamField path="spec.exporter.endpoint" type="string">
+      Address of the OTLP collector endpoint. If the endpoint uses `https://`, TLS must also be configured.
+    </ParamField>
+    <ParamField path="spec.exporter.tls" type="object">
+      TLS configuration for the exporter. Required when using `https://` endpoints.
+
+      <Expandable title="tls fields">
+        <ParamField path="spec.exporter.tls.secretName" type="string">
+          Name of the Kubernetes `Secret` containing the client certificate (`tls.crt`) and private key (`tls.key`). Must be in the same namespace as the workload.
+        </ParamField>
+        <ParamField path="spec.exporter.tls.configMapName" type="string">
+          Name of a `ConfigMap` containing the CA certificate. If not set, the CA is taken from `secretName`.
+        </ParamField>
+        <ParamField path="spec.exporter.tls.ca_file" type="string">
+          Key in the ConfigMap/Secret for the CA certificate, or an absolute path on the workload filesystem.
+        </ParamField>
+        <ParamField path="spec.exporter.tls.cert_file" type="string">
+          Key in the Secret for the client certificate, or an absolute path.
+        </ParamField>
+        <ParamField path="spec.exporter.tls.key_file" type="string">
+          Key in the Secret for the private key, or an absolute path.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Resource
+
+<ParamField path="spec.resource" type="object">
+  OpenTelemetry resource attributes configuration applied to all injected SDKs.
+
+  <Expandable title="resource fields">
+    <ParamField path="spec.resource.resourceAttributes" type="object">
+      Key-value pairs added as resource attributes (e.g., `environment: production`). These are set in `OTEL_RESOURCE_ATTRIBUTES`.
+    </ParamField>
+    <ParamField path="spec.resource.addK8sUIDAttributes" type="boolean" default="false">
+      When `true`, adds Kubernetes UID-based resource attributes (e.g., `k8s.deployment.uid`, `k8s.pod.uid`).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Propagators
+
+<ParamField path="spec.propagators" type="array">
+  List of context propagation formats. Values are set in the `OTEL_PROPAGATORS` environment variable.
+
+  | Value | Description |
+  |-------|-------------|
+  | `tracecontext` | W3C Trace Context (recommended) |
+  | `baggage` | W3C Baggage |
+  | `b3` | B3 Single header |
+  | `b3multi` | B3 Multi-header |
+  | `jaeger` | Jaeger propagation format |
+  | `xray` | AWS X-Ray propagation |
+  | `ottrace` | OpenTracing propagation |
+  | `none` | Disable propagation (use SDK defaults) |
+</ParamField>
+
+### Sampler
+
+<ParamField path="spec.sampler" type="object">
+  Trace sampling configuration.
+
+  <Expandable title="sampler fields">
+    <ParamField path="spec.sampler.type" type="string">
+      Sampler type. The value is set in `OTEL_TRACES_SAMPLER`.
+
+      | Value | Description |
+      |-------|-------------|
+      | `always_on` | Sample every trace |
+      | `always_off` | Drop every trace |
+      | `traceidratio` | Sample based on trace ID ratio |
+      | `parentbased_always_on` | Parent-based: sample if parent is sampled (default) |
+      | `parentbased_always_off` | Parent-based: never sample |
+      | `parentbased_traceidratio` | Parent-based ratio sampling |
+      | `jaeger_remote` | Jaeger remote sampling |
+      | `xray` | AWS X-Ray centralized sampling |
+    </ParamField>
+    <ParamField path="spec.sampler.argument" type="string">
+      Sampler argument. Value is set in `OTEL_TRACES_SAMPLER_ARG`. For `parentbased_traceidratio` or `traceidratio`, provide a decimal in `[0..1]` (e.g., `"0.25"` for 25% sampling).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Defaults
+
+<ParamField path="spec.defaults" type="object">
+  Default behavior settings for the instrumentation.
+
+  <Expandable title="defaults fields">
+    <ParamField path="spec.defaults.useLabelsForResourceAttributes" type="boolean" default="false">
+      When `true`, uses common Kubernetes labels as resource attributes:
+      - `app.kubernetes.io/instance` → `service.name`
+      - `app.kubernetes.io/name` → `service.name`
+      - `app.kubernetes.io/version` → `service.version`
+
+      The first matching label wins.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Common Fields
+
+<ParamField path="spec.env" type="array">
+  Common environment variables injected across all language instrumentations. Env var precedence (highest to lowest): original container vars → language-specific vars → these common vars → spec config vars. If a variable is already defined at a higher precedence, this value is ignored.
+</ParamField>
+
+<ParamField path="spec.imagePullPolicy" type="string">
+  Image pull policy for the instrumentation init containers. One of `Always`, `Never`, or `IfNotPresent`. Defaults to `Always` for `:latest` tags, otherwise `IfNotPresent`.
+</ParamField>
+
+### Language: Java
+
+<ParamField path="spec.java" type="object">
+  Configuration for Java auto-instrumentation. Injected via a `javaagent` JAR.
+
+  Activate with pod annotation: `instrumentation.opentelemetry.io/inject-java: "true"`
+
+  <Expandable title="java fields">
+    <ParamField path="spec.java.image" type="string">
+      Container image with the Java agent JAR.
+    </ParamField>
+    <ParamField path="spec.java.env" type="array">
+      Java-specific environment variables. Higher precedence than `spec.env`.
+    </ParamField>
+    <ParamField path="spec.java.resources" type="object">
+      Compute resource requirements for the Java instrumentation init container.
+    </ParamField>
+    <ParamField path="spec.java.volumeClaimTemplate" type="object">
+      Ephemeral volume template for the instrumentation files. If omitted, an `emptyDir` with the size limit is used.
+    </ParamField>
+    <ParamField path="spec.java.volumeLimitSize" type="string">
+      Size limit for the instrumentation volume. Default is `200Mi`. **Deprecated**: use `volumeClaimTemplate` instead.
+    </ParamField>
+    <ParamField path="spec.java.extensions" type="array">
+      Additional Java instrumentation extension JARs to copy alongside the agent.
+
+      <Expandable title="extensions fields">
+        <ParamField path="spec.java.extensions[].image" type="string" required>
+          Container image containing the extension JAR.
+        </ParamField>
+        <ParamField path="spec.java.extensions[].dir" type="string" required>
+          Directory inside the image where the extension JAR resides.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Language: Node.js
+
+<ParamField path="spec.nodejs" type="object">
+  Configuration for Node.js auto-instrumentation.
+
+  Activate with pod annotation: `instrumentation.opentelemetry.io/inject-nodejs: "true"`
+
+  <Expandable title="nodejs fields">
+    <ParamField path="spec.nodejs.image" type="string">
+      Container image with the Node.js SDK and instrumentation.
+    </ParamField>
+    <ParamField path="spec.nodejs.env" type="array">
+      Node.js-specific environment variables.
+    </ParamField>
+    <ParamField path="spec.nodejs.resourceRequirements" type="object">
+      Compute resource requirements for the Node.js init container.
+    </ParamField>
+    <ParamField path="spec.nodejs.volumeClaimTemplate" type="object">
+      Ephemeral volume template. Defaults to `emptyDir` with `volumeLimitSize`.
+    </ParamField>
+    <ParamField path="spec.nodejs.volumeLimitSize" type="string">
+      Volume size limit. Default is `200Mi`. **Deprecated**.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Language: Python
+
+<ParamField path="spec.python" type="object">
+  Configuration for Python auto-instrumentation.
+
+  Activate with pod annotation: `instrumentation.opentelemetry.io/inject-python: "true"`
+
+  <Expandable title="python fields">
+    <ParamField path="spec.python.image" type="string">
+      Container image with the Python SDK and instrumentation.
+    </ParamField>
+    <ParamField path="spec.python.env" type="array">
+      Python-specific environment variables.
+    </ParamField>
+    <ParamField path="spec.python.resourceRequirements" type="object">
+      Compute resource requirements for the Python init container.
+    </ParamField>
+    <ParamField path="spec.python.volumeClaimTemplate" type="object">
+      Ephemeral volume template.
+    </ParamField>
+    <ParamField path="spec.python.volumeLimitSize" type="string">
+      Volume size limit. Default is `200Mi`. **Deprecated**.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Language: .NET
+
+<ParamField path="spec.dotnet" type="object">
+  Configuration for .NET auto-instrumentation.
+
+  Activate with pod annotation: `instrumentation.opentelemetry.io/inject-dotnet: "true"`
+
+  <Expandable title="dotnet fields">
+    <ParamField path="spec.dotnet.image" type="string">
+      Container image with the .NET SDK and instrumentation.
+    </ParamField>
+    <ParamField path="spec.dotnet.env" type="array">
+      .NET-specific environment variables.
+    </ParamField>
+    <ParamField path="spec.dotnet.resourceRequirements" type="object">
+      Compute resource requirements for the .NET init container.
+    </ParamField>
+    <ParamField path="spec.dotnet.volumeClaimTemplate" type="object">
+      Ephemeral volume template.
+    </ParamField>
+    <ParamField path="spec.dotnet.volumeLimitSize" type="string">
+      Volume size limit. Default is `200Mi`. **Deprecated**.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Language: Go
+
+<ParamField path="spec.go" type="object">
+  Configuration for Go auto-instrumentation. Uses eBPF-based instrumentation.
+
+  Activate with pod annotation: `instrumentation.opentelemetry.io/inject-go: "true"`
+
+  **Required**: You must provide `OTEL_GO_AUTO_TARGET_EXE` either via `spec.go.env` or the pod annotation `instrumentation.opentelemetry.io/otel-go-auto-target-exe`. Without this value, injection is aborted and the original pod is left unchanged.
+
+  <Expandable title="go fields">
+    <ParamField path="spec.go.image" type="string">
+      Container image with the Go SDK and auto-instrumentation binary.
+    </ParamField>
+    <ParamField path="spec.go.env" type="array">
+      Go-specific environment variables. Must include `OTEL_GO_AUTO_TARGET_EXE` pointing to the target executable path.
+    </ParamField>
+    <ParamField path="spec.go.resourceRequirements" type="object">
+      Compute resource requirements for the Go init container.
+    </ParamField>
+    <ParamField path="spec.go.volumeClaimTemplate" type="object">
+      Ephemeral volume template.
+    </ParamField>
+    <ParamField path="spec.go.volumeLimitSize" type="string">
+      Volume size limit. Default is `200Mi`. **Deprecated**.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Language: Apache HTTPD
+
+<ParamField path="spec.apacheHttpd" type="object">
+  Configuration for Apache HTTPD auto-instrumentation using the OpenTelemetry webserver module.
+
+  Activate with pod annotation: `instrumentation.opentelemetry.io/inject-apache-httpd: "true"`
+
+  <Expandable title="apacheHttpd fields">
+    <ParamField path="spec.apacheHttpd.image" type="string">
+      Container image with the Apache HTTPD SDK.
+    </ParamField>
+    <ParamField path="spec.apacheHttpd.env" type="array">
+      Apache HTTPD-specific environment variables.
+    </ParamField>
+    <ParamField path="spec.apacheHttpd.attrs" type="array">
+      Agent-specific attributes as `EnvVar` entries. Overrides agent defaults. See [opentelemetry-cpp-contrib](https://github.com/open-telemetry/opentelemetry-cpp-contrib/tree/main/instrumentation/otel-webserver-module).
+    </ParamField>
+    <ParamField path="spec.apacheHttpd.version" type="string" default="2.4">
+      Apache HTTPD server version. One of `2.4` or `2.2`.
+    </ParamField>
+    <ParamField path="spec.apacheHttpd.configPath" type="string" default="/usr/local/apache2/conf">
+      Path to the Apache HTTPD configuration directory. Only needed if different from the default.
+    </ParamField>
+    <ParamField path="spec.apacheHttpd.resourceRequirements" type="object">
+      Compute resource requirements for the Apache HTTPD init container.
+    </ParamField>
+    <ParamField path="spec.apacheHttpd.volumeClaimTemplate" type="object">
+      Ephemeral volume template.
+    </ParamField>
+    <ParamField path="spec.apacheHttpd.volumeLimitSize" type="string">
+      Volume size limit. Default is `200Mi`. **Deprecated**.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Language: Nginx
+
+<ParamField path="spec.nginx" type="object">
+  Configuration for Nginx auto-instrumentation using the OpenTelemetry webserver module.
+
+  Activate with pod annotation: `instrumentation.opentelemetry.io/inject-nginx: "true"`
+
+  <Expandable title="nginx fields">
+    <ParamField path="spec.nginx.image" type="string">
+      Container image with the Nginx SDK.
+    </ParamField>
+    <ParamField path="spec.nginx.env" type="array">
+      Nginx-specific environment variables.
+    </ParamField>
+    <ParamField path="spec.nginx.attrs" type="array">
+      Agent-specific attributes as `EnvVar` entries. See [opentelemetry-cpp-contrib](https://github.com/open-telemetry/opentelemetry-cpp-contrib/tree/main/instrumentation/otel-webserver-module).
+    </ParamField>
+    <ParamField path="spec.nginx.configFile" type="string" default="/etc/nginx/nginx.conf">
+      Path to the Nginx configuration file. Only needed if different from the default.
+    </ParamField>
+    <ParamField path="spec.nginx.resourceRequirements" type="object">
+      Compute resource requirements for the Nginx init container.
+    </ParamField>
+    <ParamField path="spec.nginx.volumeClaimTemplate" type="object">
+      Ephemeral volume template.
+    </ParamField>
+    <ParamField path="spec.nginx.volumeLimitSize" type="string">
+      Volume size limit. Default is `200Mi`. **Deprecated**.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Status Fields
+
+The `Instrumentation` status is currently empty (reserved for future use).
+
+## Env Var Precedence
+
+Environment variables follow a strict precedence order (highest wins):
+
+1. **Original container env vars** — Variables already defined in the workload's container spec.
+2. **Language-specific env vars** — Variables from `spec.<language>.env`.
+3. **Common env vars** — Variables from `spec.env`.
+4. **Spec config vars** — Variables derived from `spec.exporter`, `spec.sampler`, etc.
+
+If a variable is defined at a higher level, lower-level definitions are silently ignored.

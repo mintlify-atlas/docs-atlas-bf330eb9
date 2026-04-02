@@ -1,0 +1,204 @@
+---
+title: "Resource Attributes"
+description: "How the OpenTelemetry Operator sets resource attributes from pod metadata, annotations, and Kubernetes labels."
+---
+
+The OpenTelemetry Operator automatically sets resource attributes based on the pod's metadata. You can also configure attributes explicitly using annotations or Kubernetes labels.
+
+## Setting attributes via annotations
+
+Add annotations with the `resource.opentelemetry.io/` prefix to a pod to set any resource attribute. These annotations take precedence over labels and calculated values.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: example-pod
+  annotations:
+    resource.opentelemetry.io/service.name: "my-service"
+    resource.opentelemetry.io/service.version: "1.0.0"
+    resource.opentelemetry.io/deployment.environment.name: "production"
+spec:
+  containers:
+    - name: main-container
+      image: your-image:tag
+```
+
+You can set any resource attribute this way — not just `service.*` attributes.
+
+## Setting attributes via Kubernetes labels
+
+The operator can derive resource attributes from standard `app.kubernetes.io/*` labels. This is an opt-in feature controlled by the `useLabelsForResourceAttributes` field in the `Instrumentation` CR.
+
+**Enable label-based attributes:**
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: my-instrumentation
+spec:
+  defaults:
+    useLabelsForResourceAttributes: true
+```
+
+**Pod with standard Kubernetes labels:**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: example-pod
+  labels:
+    app.kubernetes.io/name: "my-service"
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/part-of: "shop"
+spec:
+  containers:
+    - name: main-container
+      image: your-image:tag
+```
+
+The following label-to-attribute mappings are supported (first matching label wins):
+
+| Kubernetes label                | Resource attribute  |
+| ------------------------------- | ------------------- |
+| `app.kubernetes.io/name`        | `service.name`      |
+| `app.kubernetes.io/instance`    | `service.name`      |
+| `app.kubernetes.io/version`     | `service.version`   |
+
+## Priority order
+
+Resource attributes are resolved using the following priority chain. The **first value found** for each attribute wins:
+
+1. `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_SERVICE_NAME` environment variables on the container
+2. Annotations with the `resource.opentelemetry.io/` prefix on the pod
+3. Kubernetes labels (`app.kubernetes.io/*`), if `useLabelsForResourceAttributes: true` is set in the `Instrumentation` CR
+4. Values calculated from the pod's metadata (see below)
+5. Resource attributes set in `spec.resource.resourceAttributes` in the `Instrumentation` CR
+
+This priority applies per attribute — you can mix approaches, setting some attributes via annotations and others via labels.
+
+## Calculated attributes
+
+The following attributes are derived automatically from pod metadata when not overridden by a higher-priority source.
+
+### `service.name`
+
+The first value found in the following chain:
+
+1. `pod.annotation[resource.opentelemetry.io/service.name]`
+2. `pod.label[app.kubernetes.io/name]` (if `useLabelsForResourceAttributes` is `true`)
+3. `k8s.deployment.name`
+4. `k8s.replicaset.name`
+5. `k8s.statefulset.name`
+6. `k8s.daemonset.name`
+7. `k8s.cronjob.name`
+8. `k8s.job.name`
+9. `k8s.pod.name`
+10. `k8s.container.name`
+
+### `service.version`
+
+The first value found in the following chain:
+
+1. `pod.annotation[resource.opentelemetry.io/service.version]`
+2. `pod.label[app.kubernetes.io/version]` (if `useLabelsForResourceAttributes` is `true`)
+3. Container Docker image tag (only if the tag does not contain a `/`)
+
+### `service.instance.id`
+
+The first value found in the following chain:
+
+1. `pod.annotation[resource.opentelemetry.io/service.instance.id]`
+2. Concatenation of `k8s.namespace.name`, `k8s.pod.name`, and `k8s.container.name` joined with `.`
+
+### `service.namespace`
+
+The first value found in the following chain:
+
+1. `pod.annotation[resource.opentelemetry.io/service.namespace]`
+2. `k8s.namespace.name`
+
+## Setting attributes in the Instrumentation CR
+
+You can also provide a baseline set of resource attributes directly in the `Instrumentation` CR. These have the lowest priority and will be overridden by any of the above sources:
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: my-instrumentation
+spec:
+  resource:
+    resourceAttributes:
+      environment: production
+      team: platform
+    addK8sUIDAttributes: true
+```
+
+Set `addK8sUIDAttributes: true` to also collect UID-based attributes such as `k8s.deployment.uid`.
+
+## Examples
+
+<Tabs>
+  <Tab title="Annotations approach">
+    Explicit annotations give you full control and the highest non-env-var priority:
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: payment-service
+    spec:
+      template:
+        metadata:
+          annotations:
+            instrumentation.opentelemetry.io/inject-java: "true"
+            resource.opentelemetry.io/service.name: "payment-service"
+            resource.opentelemetry.io/service.version: "2.3.1"
+            resource.opentelemetry.io/deployment.environment.name: "production"
+        spec:
+          containers:
+            - name: app
+              image: payment-service:2.3.1
+    ```
+  </Tab>
+
+  <Tab title="Labels approach">
+    Standard Kubernetes labels work when `useLabelsForResourceAttributes` is enabled in the `Instrumentation` CR:
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: payment-service
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: "payment-service"
+            app.kubernetes.io/version: "2.3.1"
+          annotations:
+            instrumentation.opentelemetry.io/inject-java: "true"
+        spec:
+          containers:
+            - name: app
+              image: payment-service:2.3.1
+    ```
+
+    And in the `Instrumentation` CR:
+
+    ```yaml
+    apiVersion: opentelemetry.io/v1alpha1
+    kind: Instrumentation
+    metadata:
+      name: my-instrumentation
+    spec:
+      defaults:
+        useLabelsForResourceAttributes: true
+      exporter:
+        endpoint: http://otel-collector:4317
+    ```
+  </Tab>
+</Tabs>

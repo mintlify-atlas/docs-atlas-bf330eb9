@@ -1,0 +1,214 @@
+---
+title: "Cluster Observability"
+description: "Deploy and manage cluster-wide OpenTelemetry observability with a single Custom Resource."
+---
+
+`ClusterObservability` provides a streamlined way to get full-cluster observability with a single Custom Resource. It automatically creates and manages an agent DaemonSet, a cluster-level deployment, and an auto-instrumentation CR — removing the need to configure each component individually.
+
+<Warning>
+ClusterObservability is controlled by a feature gate and is not enabled by default. You must start the operator with `--feature-gates=+operator.clusterobservability` to use it.
+</Warning>
+
+## What it manages
+
+<CardGroup cols={3}>
+  <Card title="Agent DaemonSet" icon="server">
+    A node-level collector that receives OTLP traces and metrics from instrumented apps, collects kubelet stats, and ships container logs.
+  </Card>
+  <Card title="Cluster deployment" icon="sitemap">
+    A single-replica collector that gathers cluster-level Kubernetes metrics and events via the `k8s_cluster` receiver.
+  </Card>
+  <Card title="Instrumentation CR" icon="code">
+    A single `Instrumentation` resource for auto-instrumenting application workloads. Shared across all namespaces.
+  </Card>
+</CardGroup>
+
+The controller uses a **controller-of-controllers pattern**: it creates `OpenTelemetryCollector` and `Instrumentation` CRs which are then reconciled by their own controllers.
+
+## Enable the feature gate
+
+```bash
+./manager --feature-gates=+operator.clusterobservability
+```
+
+When deploying via Helm or a manifest, pass this flag to the operator container as an argument.
+
+## Quick start
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: ClusterObservability
+metadata:
+  name: cluster-observability
+  namespace: opentelemetry-operator-system
+spec:
+  # OTLP HTTP exporter — all signals (logs, traces, metrics) are enabled by default
+  exporter:
+    endpoint: "https://otel-backend.example.com:4318"
+    # Optional: override endpoint per signal
+    traces_endpoint: "https://trace-backend.example.com/v2/trace/otlp"
+    metrics_endpoint: "https://metrics-backend.example.com/v2/datapoint/otlp"
+    logs_endpoint: "https://logs-backend.example.com/v1/logs"
+    headers:
+      "Authorization": "Bearer your-token"
+    compression: "gzip"
+    timeout: "30s"
+```
+
+<Note>
+Only one active `ClusterObservability` resource is allowed per cluster. See [conflict detection](#conflict-detection) below.
+</Note>
+
+## Architecture
+
+The `ClusterObservability` controller creates three child resources, each managed by an existing controller:
+
+```
+ClusterObservability CR
+  └── ClusterObservability Controller
+        ├── OpenTelemetryCollector CR (Agent DaemonSet)
+        │     └── OpenTelemetryCollector Controller → Agent DaemonSet
+        ├── OpenTelemetryCollector CR (Cluster Deployment)
+        │     └── OpenTelemetryCollector Controller → Cluster Deployment
+        └── Instrumentation CR
+              └── Instrumentation Controller → Instrumented Pods
+```
+
+Configuration is loaded from embedded YAML files and organized by platform:
+
+```
+internal/manifests/clusterobservability/config/configs/
+├── agent-collector-base.yaml        # Base agent config (all platforms)
+├── cluster-collector-base.yaml      # Base cluster config (all platforms)
+└── distros/
+    └── openshift/
+        ├── agent-collector-overrides.yaml
+        └── cluster-collector-overrides.yaml
+```
+
+## Platform auto-detection
+
+The controller detects the Kubernetes distribution at startup (cached for efficiency) and applies platform-specific configuration automatically.
+
+| Platform | Detection | Additional actions |
+|---|---|---|
+| **OpenShift** | Checks for OpenShift API availability | Creates `SecurityContextConstraints` for collector pods; applies kubelet CA certificate configuration |
+| **Vanilla Kubernetes** | Default | No additional resources |
+| **Other platforms** | Planned | Future support for EKS, GKE, AKS-specific configurations |
+
+The same `ClusterObservability` CR works across distributions without any user changes.
+
+## Collector configuration
+
+### Agent collector
+
+Runs as a `DaemonSet` with `hostNetwork: true`. Collects:
+
+- **OTLP receiver** — accepts traces and metrics from instrumented apps on gRPC port 4317 and HTTP port 4318
+- **Kubelet stats** — pod and container metrics via the `kubeletstats` receiver
+- **Container logs** — application logs via the `filelog` receiver
+
+Because the agent runs on the host network, instrumented applications can send telemetry to their local node's collector using `$(OTEL_NODE_IP):4317` or `$(OTEL_NODE_IP):4318`.
+
+### Cluster collector
+
+Runs as a `Deployment` and collects:
+
+- **Cluster metrics** — via the `k8s_cluster` receiver
+
+## Auto-instrumentation
+
+`ClusterObservability` creates a single `Instrumentation` CR in the same namespace as the `ClusterObservability` resource (by default `opentelemetry-operator-system`). To trigger auto-instrumentation in your workloads, annotate the pod template with `namespace/name` format pointing to this CR:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  namespace: my-apps
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "opentelemetry-operator-system/default-instrumentation"
+    spec:
+      containers:
+      - name: app
+        image: my-java-app:latest
+```
+
+The pattern is `<namespace>/<instrumentation-name>`, where `<namespace>` is the namespace where `ClusterObservability` is deployed.
+
+## Conflict detection
+
+Only one active `ClusterObservability` resource is allowed per cluster. When multiple resources exist, the controller applies the following precedence rules:
+
+1. The resource with the **oldest creation timestamp** remains active.
+2. If timestamps are identical, the resource with the **lexicographically smaller `namespace/name`** becomes active.
+
+All other resources are marked with `Conflicted` status:
+
+```yaml
+Status:
+  Conditions:
+    - Type: Conflicted
+      Status: "True"
+      Reason: Configured
+      Message: Multiple ClusterObservability resources exist in cluster
+  Message: Multiple ClusterObservability resources detected. Only the oldest resource is active.
+  Phase: Conflicted
+```
+
+<Warning>
+Creating a second `ClusterObservability` resource does not split or share management — it is immediately marked as conflicted and no resources are created for it.
+</Warning>
+
+## Troubleshooting
+
+### Check operator logs
+
+```bash
+kubectl logs deployment/opentelemetry-operator-controller-manager \
+  -n opentelemetry-operator-system
+```
+
+### Check ClusterObservability status
+
+```bash
+kubectl get clusterobservabilities -n opentelemetry-operator-system
+kubectl describe clusterobservability cluster-observability \
+  -n opentelemetry-operator-system
+```
+
+### Check component health
+
+```bash
+# OpenTelemetryCollector CRs created by the controller
+kubectl get opentelemetrycollector \
+  -l app.kubernetes.io/managed-by=opentelemetry-operator \
+  -n opentelemetry-operator-system
+
+# Agent DaemonSet
+kubectl get daemonsets \
+  -l app.kubernetes.io/managed-by=opentelemetry-operator \
+  -n opentelemetry-operator-system
+
+# Cluster Deployment
+kubectl get deployments \
+  -l app.kubernetes.io/managed-by=opentelemetry-operator \
+  -n opentelemetry-operator-system
+
+# Instrumentation CR
+kubectl get instrumentations -n opentelemetry-operator-system
+```
+
+### Check conflict events
+
+```bash
+kubectl get events --field-selector reason=Conflicted
+kubectl get events --field-selector involvedObject.kind=ClusterObservability
+```
+
+<Info>
+If automatic RBAC creation (`--create-rbac-permissions=true`) is not working, apply manual RBAC permissions for the collectors. This is a known issue currently under investigation.
+</Info>
